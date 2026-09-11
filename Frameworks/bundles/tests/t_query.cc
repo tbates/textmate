@@ -239,9 +239,9 @@ namespace
 {
 	std::string const BundleUUID = "B0B94C92-1870-491C-A928-9528387EEACA";
 	std::string const MenuUUID   = "C1CA5D03-2981-402D-B039-A63949FBDA12";
-	std::string const FirstUUID  = "D2DB6E14-3A92-513E-C14A-B74A5A0CCE2";
-	std::string const SecondUUID = "E3EC7F25-4BA3-624F-D25B-C85B6B1DDF3";
-	std::string const ThirdUUID  = "F4FD8036-5CB4-7350-E36C-D96C7C2EE04";
+	std::string const FirstUUID  = "D2DB6E14-3A92-513E-C14A-B74A5A0CCE20";
+	std::string const SecondUUID = "E3EC7F25-4BA3-624F-D25B-C85B6B1DDF31";
+	std::string const ThirdUUID  = "F4FD8036-5CB4-7350-E36C-D96C7C2EE042";
 
 	plist::dictionary_t make_info_plist ()
 	{

@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@v6 # v6 = node24
         with:
           submodules: recursive
 
@@ -34,7 +34,7 @@ jobs:
         run: /usr/bin/ditto -c -k --keepParent build/Applications/TextMate/TextMate.app "$RUNNER_TEMP/TextMate.zip"
 
       - name: Upload TextMate.app
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6 # if v6 doesn't resolve yet, use @master
         with:
           name: TextMate-${{ github.sha }}
           path: ${{ runner.temp }}/TextMate.zip
