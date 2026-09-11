@@ -333,3 +333,44 @@ void test_insert_uuid_into_main_menu ()
 		OAK_ASSERT(empty.empty());
 	}
 }
+
+void test_move_uuid_within_main_menu ()
+{
+	// Index insertion clamps and repositions existing entries.
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, BundleUUID, ThirdUUID, 0));
+		auto items = items_at(info, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 3);
+		OAK_ASSERT_EQ(items[0], ThirdUUID);
+
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, BundleUUID, FirstUUID, 99));
+		items = items_at(info, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 3);
+		OAK_ASSERT_EQ(items[0], ThirdUUID);
+		OAK_ASSERT_EQ(items[1], SecondUUID);
+		OAK_ASSERT_EQ(items[2], FirstUUID);
+
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, MenuUUID, ThirdUUID, 0));
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.submenus." + MenuUUID + ".items")[0], ThirdUUID);
+		OAK_ASSERT(!bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, ThirdUUID, SecondUUID, 0));
+	}
+
+	// Removal composes with insertion into a move across menus.
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::remove_uuid_from_main_menu(info, BundleUUID, BundleUUID, SecondUUID));
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").size(), 1);
+
+		OAK_ASSERT(bundles::remove_uuid_from_main_menu(info, BundleUUID, BundleUUID, SecondUUID));
+		OAK_ASSERT(!bundles::remove_uuid_from_main_menu(info, BundleUUID, ThirdUUID, SecondUUID));
+		OAK_ASSERT(!bundles::remove_uuid_from_main_menu(info, BundleUUID, BundleUUID, "not-a-uuid"));
+
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, MenuUUID, SecondUUID, 0));
+		auto items = items_at(info, "mainMenu.submenus." + MenuUUID + ".items");
+		OAK_ASSERT_EQ(items.size(), 2);
+		OAK_ASSERT_EQ(items[0], SecondUUID);
+		OAK_ASSERT_EQ(items[1], FirstUUID);
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").size(), 1);
+	}
+}

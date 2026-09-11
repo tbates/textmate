@@ -205,6 +205,44 @@ namespace bundles
 		Callbacks(&callback_t::bundles_did_change);
 	}
 
+	void add_to_menu_at_index (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, size_t index)
+	{
+		if(!menu_uuid || !item_uuid)
+			return;
+
+		Callbacks(&callback_t::bundles_will_change);
+
+		std::vector<oak::uuid_t>& members = AllMenus[menu_uuid];
+		members.erase(std::remove(members.begin(), members.end(), item_uuid), members.end());
+		members.insert(members.begin() + std::min(index, members.size()), item_uuid);
+
+		if(item_ptr item = lookup(item_uuid))
+			item->set_parent_menu(menu_uuid);
+
+		cache().clear();
+		Callbacks(&callback_t::bundles_did_change);
+	}
+
+	void remove_from_menu (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid)
+	{
+		if(!menu_uuid || !item_uuid)
+			return;
+
+		Callbacks(&callback_t::bundles_will_change);
+
+		if(auto menu = AllMenus.find(menu_uuid); menu != AllMenus.end())
+			menu->second.erase(std::remove(menu->second.begin(), menu->second.end(), item_uuid), menu->second.end());
+
+		if(item_ptr item = lookup(item_uuid))
+		{
+			if(item->parent_menu() == menu_uuid && item->bundle())
+				item->set_parent_menu(item->bundle()->uuid());
+		}
+
+		cache().clear();
+		Callbacks(&callback_t::bundles_did_change);
+	}
+
 	void remove_item (item_ptr item)
 	{
 		iterate(it, AllItems)

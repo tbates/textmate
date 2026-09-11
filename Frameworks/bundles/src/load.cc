@@ -19,69 +19,98 @@ static std::vector<oak::uuid_t> to_menu (plist::array_t const& uuids, std::strin
 	return res;
 }
 
-bool bundles::insert_uuid_into_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid, std::string const& after_uuid)
+static plist::array_t* main_menu_items (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, bool createTopLevel)
 {
-	if(!oak::uuid_t::is_valid(menu_uuid) || !oak::uuid_t::is_valid(item_uuid))
-		return false;
-
 	auto main_menu_it = info_plist.find("mainMenu");
 	plist::dictionary_t* main_menu = main_menu_it != info_plist.end() ? plist::get<plist::dictionary_t>(&main_menu_it->second) : nullptr;
 	if(!main_menu)
-		return false;
+		return nullptr;
 
-	plist::array_t* items = nullptr;
 	if(menu_uuid == bundle_uuid)
 	{
 		auto items_it = main_menu->find("items");
 		if(items_it == main_menu->end())
-			items_it = main_menu->emplace("items", plist::array_t()).first;
-		items = plist::get<plist::array_t>(&items_it->second);
-	}
-	else
-	{
-		if(auto sub_menus_it = main_menu->find("submenus"); sub_menus_it != main_menu->end())
 		{
-			if(plist::dictionary_t* sub_menus = plist::get<plist::dictionary_t>(&sub_menus_it->second))
+			if(!createTopLevel)
+				return nullptr;
+			items_it = main_menu->emplace("items", plist::array_t()).first;
+		}
+		return plist::get<plist::array_t>(&items_it->second);
+	}
+
+	if(auto sub_menus_it = main_menu->find("submenus"); sub_menus_it != main_menu->end())
+	{
+		if(plist::dictionary_t* sub_menus = plist::get<plist::dictionary_t>(&sub_menus_it->second))
+		{
+			if(auto sub_menu_it = sub_menus->find(menu_uuid); sub_menu_it != sub_menus->end())
 			{
-				if(auto sub_menu_it = sub_menus->find(menu_uuid); sub_menu_it != sub_menus->end())
+				if(plist::dictionary_t* sub_menu = plist::get<plist::dictionary_t>(&sub_menu_it->second))
 				{
-					if(plist::dictionary_t* sub_menu = plist::get<plist::dictionary_t>(&sub_menu_it->second))
-					{
-						if(auto items_it = sub_menu->find("items"); items_it != sub_menu->end())
-							items = plist::get<plist::array_t>(&items_it->second);
-					}
+					if(auto items_it = sub_menu->find("items"); items_it != sub_menu->end())
+						return plist::get<plist::array_t>(&items_it->second);
 				}
 			}
 		}
 	}
+	return nullptr;
+}
+
+static void erase_uuid_from_array (plist::array_t& items, std::string const& item_uuid)
+{
+	items.erase(std::remove_if(items.begin(), items.end(), [&](plist::any_t const& entry){
+		std::string const* str = plist::get<std::string>(&entry);
+		return str && *str == item_uuid;
+	}), items.end());
+}
+
+bool bundles::insert_uuid_into_main_menu_at_index (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid, size_t index)
+{
+	if(!oak::uuid_t::is_valid(menu_uuid) || !oak::uuid_t::is_valid(item_uuid))
+		return false;
+
+	plist::array_t* items = main_menu_items(info_plist, bundle_uuid, menu_uuid, true);
 	if(!items)
 		return false;
 
-	for(auto const& entry : *items)
-	{
-		if(std::string const* str = plist::get<std::string>(&entry))
-		{
-			if(*str == item_uuid)
-				return true;
-		}
-	}
+	erase_uuid_from_array(*items, item_uuid);
+	items->insert(items->begin() + std::min(index, items->size()), plist::any_t(item_uuid));
+	return true;
+}
 
-	auto it = items->end();
+bool bundles::insert_uuid_into_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid, std::string const& after_uuid)
+{
+	plist::array_t* items = main_menu_items(info_plist, bundle_uuid, menu_uuid, true);
+	if(!items)
+		return false;
+
+	size_t index = items->size();
 	if(!after_uuid.empty())
 	{
-		for(auto probe = items->begin(); probe != items->end(); ++probe)
+		for(size_t i = 0; i < items->size(); ++i)
 		{
-			if(std::string const* str = plist::get<std::string>(&*probe))
+			if(std::string const* str = plist::get<std::string>(&(*items)[i]))
 			{
 				if(*str == after_uuid)
 				{
-					it = probe + 1;
+					index = i + 1;
 					break;
 				}
 			}
 		}
 	}
-	items->insert(it, plist::any_t(item_uuid));
+	return insert_uuid_into_main_menu_at_index(info_plist, bundle_uuid, menu_uuid, item_uuid, index);
+}
+
+bool bundles::remove_uuid_from_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid)
+{
+	if(!oak::uuid_t::is_valid(menu_uuid) || !oak::uuid_t::is_valid(item_uuid))
+		return false;
+
+	plist::array_t* items = main_menu_items(info_plist, bundle_uuid, menu_uuid, false);
+	if(!items)
+		return false;
+
+	erase_uuid_from_array(*items, item_uuid);
 	return true;
 }
 

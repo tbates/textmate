@@ -15,6 +15,15 @@ namespace bundles
 // is de-duplicated. Returns false without touching info_plist when either
 // uuid is invalid or the addressed menu does not exist.
 bool insert_uuid_into_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid, std::string const& after_uuid = std::string());
+
+// Insert item_uuid at index in the addressed menu’s items array (clamped to
+// the end), de-duplicated. Same addressing and failure contract as above.
+bool insert_uuid_into_main_menu_at_index (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid, size_t index);
+
+// Remove item_uuid from the addressed menu’s items array. Returns false
+// without touching info_plist when the menu does not exist; removing an
+// absent entry still returns true.
+bool remove_uuid_from_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid);
 }
 
 #endif /* end of include guard: LOAD_H_C8BVI372 */

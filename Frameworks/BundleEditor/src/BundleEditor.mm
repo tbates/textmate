@@ -25,6 +25,7 @@
 #import <oak/debug.h>
 
 @class OakCommand;
+@class BEOutlineEntry;
 
 @interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate>
 {
@@ -38,7 +39,9 @@
 	CGFloat _maxLabelWidth;
 	CGFloat _minPropertiesViewWidth;
 
-	NSBrowser* browser;
+	NSOutlineView* outlineView;
+	NSMutableDictionary* entryCache; // identifier-path → BEOutlineEntry, one generation per reloadData
+	NSMutableSet* expandedPaths;
 	OakDocumentView* documentView;
 
 	be::entry_ptr bundles;
@@ -51,6 +54,11 @@
 }
 - (void)didChangeBundleItems;
 - (void)didChangeModifiedState;
+- (BEOutlineEntry*)wrapperForPath:(NSString*)path create:(BOOL)create;
+- (void)expandAncestorsOfPath:(NSString*)path;
+- (NSInteger)rowForPath:(NSString*)path;
+- (void)outlineSelectionDidChange:(NSNotification*)notification;
+- (BOOL)moveBundleItems:(NSArray*)uuidStrings toMenu:(oak::uuid_t const&)targetMenu atIndex:(size_t)index inBundle:(bundles::item_ptr const&)bundle;
 @property (nonatomic) PropertiesViewController* sharedPropertiesViewController;
 @property (nonatomic) PropertiesViewController* extraPropertiesViewController;
 @property (nonatomic) NSMutableDictionary* bundleItemProperties;
@@ -130,20 +138,48 @@ namespace
 	};
 }
 
-static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, be::entry_ptr entry)
+// NSOutlineView items must be Objective-C objects. The wrapper retains shared
+// ownership of its C++ browser entry; the entry cache is thrown away on every
+// reloadData, so wrappers never outlive their generation. Paths join entry
+// identifiers with \x1F from the invisible root, which keeps even same-named
+// submenus in different bundles distinct.
+@interface BEOutlineEntry : NSObject
 {
-	for(size_t col = 0; col < aColumn; ++col)
-	{
-		NSInteger row = [aBrowser selectedRowInColumn:col];
-		if(row == -1)
-		{
-			os_log_error(OS_LOG_DEFAULT, "*** abort");
-			return be::entry_ptr();
-		}
-		entry = entry->children()[row];
-	}
-	return entry;
+@public
+	be::entry_ptr _entry;
+	NSString* _path;
 }
+- (instancetype)initWithEntry:(be::entry_ptr const&)anEntry path:(NSString*)aPath;
+@end
+
+@implementation BEOutlineEntry
+- (instancetype)initWithEntry:(be::entry_ptr const&)anEntry path:(NSString*)aPath
+{
+	if(self = [super init])
+	{
+		_entry = anEntry;
+		_path = aPath;
+	}
+	return self;
+}
+
+// Wrappers are re-created across data-source calls and generations; the
+// outline must treat any two wrappers for one identifier path as the node.
+- (BOOL)isEqual:(id)other
+{
+	return [other isKindOfClass:[BEOutlineEntry class]] && [((BEOutlineEntry*)other)->_path isEqualToString:_path];
+}
+
+- (NSUInteger)hash
+{
+	return [_path hash];
+}
+@end
+
+static NSString* const kPathSeparator = @"\x1F";
+
+// Private pasteboard type for intra-editor drags: an array of item UUID strings.
+static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUIDs";
 
 @implementation BundleEditor
 + (instancetype)sharedInstance
@@ -198,9 +234,12 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 		self.windowSplitViewController.splitView.autosaveName = @"Bundle Editor Properties";
 
 		bundles = be::bundle_entries();
-		[browser loadColumnZero];
+		entryCache = [NSMutableDictionary dictionary];
+		expandedPaths = [NSMutableSet set];
+		[outlineView reloadData];
+		[outlineView expandItem:nil expandChildren:YES];
 
-		[self.window makeFirstResponder:browser];
+		[self.window makeFirstResponder:outlineView];
 	}
 	return self;
 }
@@ -211,33 +250,86 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	{
 		_browserViewController = [[NSViewController alloc] initWithNibName:nil bundle:nil];
 
-		browser = [[NSBrowser alloc] initWithFrame:NSZeroRect];
-		browser.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+		NSScrollView* scrollView = [[NSScrollView alloc] initWithFrame:NSZeroRect];
+		scrollView.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+		scrollView.hasVerticalScroller = YES;
+		scrollView.autohidesScrollers = YES;
 
-		if(@available(macos 11, *))
-		{
-			_browserViewController.view = browser;
-		}
-		else
-		{
-			NSView* clipView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 10, 10)];
-			[clipView addSubview:browser];
-			browser.frame = NSMakeRect(-1, -1, 12, 12);
+		outlineView = [[NSOutlineView alloc] initWithFrame:NSZeroRect];
+		NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"Items"];
+		[outlineView addTableColumn:column];
+		outlineView.outlineTableColumn = column;
+		outlineView.headerView = nil;
+		outlineView.delegate = self;
+		outlineView.dataSource = self;
+		outlineView.allowsMultipleSelection = YES;
+		outlineView.allowsEmptySelection = YES;
+		[outlineView registerForDraggedTypes:@[ kBundleItemUUIDsPboardType ]];
+		[outlineView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
 
-			_browserViewController.view = clipView;
-		}
+		scrollView.documentView = outlineView;
+		_browserViewController.view = scrollView;
 
-		browser.titled                = NO;
-		browser.autohidesScroller     = YES;
-		browser.hasHorizontalScroller = YES;
-		browser.columnResizingType    = NSBrowserUserColumnResizing;
-		browser.defaultColumnWidth    = 180;
-		browser.columnsAutosaveName   = @"OakBundleEditorBrowserColumnWidths";
-		browser.delegate              = self;
-		browser.target                = self;
-		browser.action                = @selector(browserSelectionDidChange:);
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(outlineSelectionDidChange:) name:NSOutlineViewSelectionDidChangeNotification object:outlineView];
 	}
 	return _browserViewController;
+}
+
+// The entry cache is filled lazily by the data source; this resolves any
+// identifier path (creating the wrapper when asked) so selection restore and
+// reveal can address rows that were never displayed.
+- (BEOutlineEntry*)wrapperForPath:(NSString*)path create:(BOOL)create
+{
+	if(BEOutlineEntry* wrapper = entryCache[path])
+		return wrapper;
+	if(!create || !bundles)
+		return nil;
+
+	be::entry_ptr entry = bundles;
+	NSString* built = @"";
+	for(NSString* identifier in [path componentsSeparatedByString:kPathSeparator])
+	{
+		be::entry_ptr match;
+		for(auto const& child : entry->children())
+		{
+			if(child->identifier() == to_s(identifier))
+			{
+				match = child;
+				break;
+			}
+		}
+		if(!match)
+			return nil;
+		entry = match;
+		built = [built length] == 0 ? identifier : [built stringByAppendingFormat:@"%C%@", (unichar)0x1F, identifier];
+	}
+	if(![built isEqualToString:path])
+		return nil;
+
+	BEOutlineEntry* wrapper = [[BEOutlineEntry alloc] initWithEntry:entry path:path];
+	entryCache[path] = wrapper;
+	return wrapper;
+}
+
+- (void)expandAncestorsOfPath:(NSString*)path
+{
+	NSArray* components = [path componentsSeparatedByString:kPathSeparator];
+	NSMutableString* prefix = [NSMutableString string];
+	for(size_t i = 0; i + 1 < components.count; ++i)
+	{
+		if([prefix length] != 0)
+			[prefix appendFormat:@"%C", (unichar)0x1F];
+		[prefix appendString:components[i]];
+		if(BEOutlineEntry* ancestor = [self wrapperForPath:prefix create:YES])
+			[outlineView expandItem:ancestor];
+	}
+}
+
+- (NSInteger)rowForPath:(NSString*)path
+{
+	if(BEOutlineEntry* wrapper = [self wrapperForPath:path create:YES])
+		return [outlineView rowForItem:wrapper];
+	return -1;
 }
 
 - (NSViewController*)documentViewController
@@ -320,33 +412,36 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 
 - (void)didChangeBundleItems
 {
-	std::vector<std::string> selection;
-	be::entry_ptr entry = bundles;
-	for(NSInteger col = 0; col < [browser lastColumn]+1; ++col)
+	NSMutableArray* selection = [NSMutableArray array];
+	NSIndexSet* selectedRows = [outlineView selectedRowIndexes];
+	for(size_t i = [selectedRows firstIndex]; i != NSNotFound; i = [selectedRows indexGreaterThanIndex:i])
 	{
-		NSInteger row = [browser selectedRowInColumn:col];
-		if(row == -1 || row >= entry->children().size())
-			break;
-		entry = entry->children()[row];
-		selection.push_back(entry->identifier());
+		if(BEOutlineEntry* wrapper = [outlineView itemAtRow:i])
+			[selection addObject:wrapper->_path];
 	}
+	NSSet* expanded = [expandedPaths copy];
 
 	bundles = be::bundle_entries();
-	[browser loadColumnZero];
+	entryCache = [NSMutableDictionary dictionary];
+	[outlineView reloadData];
+	[outlineView expandItem:nil expandChildren:YES];
 
-	entry = bundles;
-	for(size_t col = 0; col < selection.size(); ++col)
+	for(NSString* path in expanded)
 	{
-		for(size_t row = 0; row < entry->children().size(); ++row)
-		{
-			if(selection[col] == entry->children()[row]->identifier())
-			{
-				[browser selectRow:row inColumn:col];
-				entry = entry->children()[row];
-				break;
-			}
-		}
+		if(BEOutlineEntry* wrapper = [self wrapperForPath:path create:YES])
+			[outlineView expandItem:wrapper];
 	}
+
+	NSMutableIndexSet* rows = [NSMutableIndexSet indexSet];
+	for(NSString* path in selection)
+	{
+		[self expandAncestorsOfPath:path];
+		NSInteger row = [self rowForPath:path];
+		if(row != -1)
+			[rows addIndex:row];
+	}
+	if([rows count] != 0)
+		[outlineView selectRowIndexes:rows byExtendingSelection:NO];
 }
 
 - (void)didChangeModifiedState
@@ -370,29 +465,34 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	if(!(aType & bundles::kItemTypeMenuTypes) || !bundle)
 		return;
 
-	NSInteger selectedColumn = [browser selectedColumn];
-	if(selectedColumn < 1)
+	NSInteger selectedRow = [outlineView selectedRow];
+	if(selectedRow == -1)
 		return;
 
+	BEOutlineEntry* selected = [outlineView itemAtRow:selectedRow];
+	NSArray* components = [selected->_path componentsSeparatedByString:kPathSeparator];
+	if(components.count < 2)
+		return; // bundle itself selected: legacy top-level placement
+
 	oak::uuid_t menuContext;
-	be::entry_ptr entry = bundles;
-	for(NSInteger col = 0; col <= selectedColumn; ++col)
+	NSMutableString* prefix = [NSMutableString string];
+	for(size_t i = 0; i + 1 < components.count; ++i)
 	{
-		NSInteger row = [browser selectedRowInColumn:col];
-		if(row == -1 || row >= (NSInteger)entry->children().size())
-			return;
-		entry = entry->children()[row];
-		if(col > 0)
+		if([prefix length] != 0)
+			[prefix appendFormat:@"%C", (unichar)0x1F];
+		[prefix appendString:components[i]];
+		if(BEOutlineEntry* ancestor = [self wrapperForPath:prefix create:YES])
 		{
-			if(bundles::item_ptr represented = entry->represented_item())
+			if(bundles::item_ptr represented = ancestor->_entry->represented_item())
 			{
 				if(represented->kind() == bundles::kItemTypeMenu)
 					menuContext = represented->uuid();
-				else if(entry->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
+				else if(ancestor->_entry->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
 					menuContext = represented->uuid();
 			}
 		}
 	}
+	be::entry_ptr entry = selected->_entry;
 
 	oak::uuid_t targetMenu;
 	oak::uuid_t afterItem;
@@ -430,8 +530,14 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	if(!path || ![NSFileManager.defaultManager fileExistsAtPath:path])
 		return;
 
-	NSInteger row = [browser selectedRowInColumn:0];
-	bundles::item_ptr bundle = row != -1 ? bundles->children()[row]->represented_item() : bundles::item_ptr();
+	bundles::item_ptr bundle;
+	if([outlineView selectedRow] != -1)
+	{
+		BEOutlineEntry* selected = [outlineView itemAtRow:[outlineView selectedRow]];
+		NSString* topIdentifier = [selected->_path componentsSeparatedByString:kPathSeparator][0];
+		if(BEOutlineEntry* bundleEntry = [self wrapperForPath:topIdentifier create:YES])
+			bundle = bundleEntry->_entry->represented_item();
+	}
 	if(aType == bundles::kItemTypeBundle || bundle)
 	{
 		std::map<std::string, std::string> environment = variables_for_path(oak::basic_environment());
@@ -489,17 +595,35 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 
 		bundles::item_ptr newSelectedItem;
 		bool foundItem = false;
-		for(auto const& entry : parent_for_column(browser, [browser selectedColumn], bundles)->children())
+		be::entry_ptr siblings;
+		if(BEOutlineEntry* selected = [outlineView itemAtRow:[outlineView selectedRow]])
 		{
-			if(bundles::item_ptr item = entry->represented_item())
+			NSString* path = selected->_path;
+			NSRange lastSeparator = [path rangeOfString:kPathSeparator options:NSBackwardsSearch];
+			NSString* parentPath = lastSeparator.location == NSNotFound ? nil : [path substringToIndex:lastSeparator.location];
+			if(!parentPath)
 			{
-				if(item->uuid() == bundleItem->uuid())
-					foundItem = true;
-				else if(item->kind() != bundles::kItemTypeMenu && item->kind() != bundles::kItemTypeMenuItemSeparator)
-					newSelectedItem = item;
+				siblings = bundles;
+			}
+			else if(BEOutlineEntry* parent = [self wrapperForPath:parentPath create:YES])
+			{
+				siblings = parent->_entry;
+			}
+		}
+		if(siblings)
+		{
+			for(auto const& entry : siblings->children())
+			{
+				if(bundles::item_ptr item = entry->represented_item())
+				{
+					if(item->uuid() == bundleItem->uuid())
+						foundItem = true;
+					else if(item->kind() != bundles::kItemTypeMenu && item->kind() != bundles::kItemTypeMenuItemSeparator)
+						newSelectedItem = item;
 
-				if(foundItem && newSelectedItem)
-					break;
+					if(foundItem && newSelectedItem)
+						break;
+				}
 			}
 		}
 
@@ -540,7 +664,6 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 		if((anItem->bundle() ?: anItem) != (*bundle)->represented_item())
 			continue;
 
-		[browser selectRow:(bundle - allBundles.begin()) inColumn:0];
 		for(std::vector< std::pair<std::vector<be::entry_ptr>, int> > stack(1, std::make_pair((*bundle)->children(), -1)); !stack.empty(); stack.pop_back())
 		{
 			for(++stack.back().second; stack.back().second < stack.back().first.size(); ++stack.back().second)
@@ -552,8 +675,21 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 				}
 				else if(entry->represented_item() == anItem)
 				{
+					// The stack records one (children, index) frame per level
+					// below the bundle; replay it into an identifier path.
+					NSMutableString* path = [NSMutableString stringWithString:[NSString stringWithCxxString:(*bundle)->identifier()]];
 					for(size_t j = 0; j < stack.size(); ++j)
-						[browser selectRow:stack[j].second inColumn:j+1];
+					{
+						be::entry_ptr step = stack[j].first[stack[j].second];
+						[path appendFormat:@"%C%s", (unichar)0x1F, step->identifier().c_str()];
+					}
+					[self expandAncestorsOfPath:path];
+					NSInteger row = [self rowForPath:path];
+					if(row != -1)
+					{
+						[outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+						[outlineView scrollRowToVisible:row];
+					}
 					return;
 				}
 			}
@@ -672,92 +808,397 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	[self didChangeModifiedState];
 }
 
-// =====================
-// = NSBrowserDelegate =
-// =====================
+// ========================
+// = NSOutlineView support =
+// ========================
 
-- (NSInteger)browser:(NSBrowser*)aBrowser numberOfRowsInColumn:(NSInteger)aColumn
+- (NSInteger)outlineView:(NSOutlineView*)anOutlineView numberOfChildrenOfItem:(id)item
 {
-	be::entry_ptr entry = parent_for_column(aBrowser, aColumn, bundles);
+	be::entry_ptr entry = item ? ((BEOutlineEntry*)item)->_entry : bundles;
 	return entry && entry->has_children() ? entry->children().size() : 0;
 }
 
-- (void)browser:(NSBrowser*)aBrowser willDisplayCell:(id)aCell atRow:(NSInteger)aRow column:(NSInteger)aColumn
+- (id)outlineView:(NSOutlineView*)anOutlineView child:(NSInteger)index ofItem:(id)item
 {
-	if(NSBrowserCell* cell = [aCell isKindOfClass:[NSBrowserCell class]] ? aCell : nil)
+	be::entry_ptr parent = item ? ((BEOutlineEntry*)item)->_entry : bundles;
+	be::entry_ptr child = parent->children()[index];
+	NSString* parentPath = item ? ((BEOutlineEntry*)item)->_path : @"";
+	NSString* path = [parentPath length] == 0
+		? [NSString stringWithCxxString:child->identifier()]
+		: [parentPath stringByAppendingFormat:@"%C%s", (unichar)0x1F, child->identifier().c_str()];
+	if(BEOutlineEntry* wrapper = entryCache[path])
+		return wrapper;
+	BEOutlineEntry* wrapper = [[BEOutlineEntry alloc] initWithEntry:child path:path];
+	entryCache[path] = wrapper;
+	return wrapper;
+}
+
+- (BOOL)outlineView:(NSOutlineView*)anOutlineView isItemExpandable:(id)item
+{
+	return ((BEOutlineEntry*)item)->_entry->has_children();
+}
+
+- (NSView*)outlineView:(NSOutlineView*)anOutlineView viewForTableColumn:(NSTableColumn*)tableColumn item:(id)item
+{
+	NSTableCellView* cell = [anOutlineView makeViewWithIdentifier:@"BundleItemCell" owner:self];
+	if(!cell)
 	{
-		static NSMutableParagraphStyle* paragraphStyle = nil;
-		if(!paragraphStyle)
+		cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 200, 20)];
+		cell.identifier = @"BundleItemCell";
+
+		NSImageView* imageView = [[NSImageView alloc] initWithFrame:NSMakeRect(0, 2, 16, 16)];
+		NSTextField* textField = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 0, 180, 20)];
+		textField.editable = NO;
+		textField.bordered = NO;
+		textField.drawsBackground = NO;
+		textField.autoresizingMask = NSViewWidthSizable;
+		[cell addSubview:imageView];
+		[cell addSubview:textField];
+		cell.imageView = imageView;
+		cell.textField = textField;
+	}
+
+	be::entry_ptr entry = ((BEOutlineEntry*)item)->_entry;
+
+	static NSMutableParagraphStyle* paragraphStyle = nil;
+	if(!paragraphStyle)
+	{
+		paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+		[paragraphStyle setLineBreakMode:NSLineBreakByTruncatingTail];
+	}
+
+	NSDictionary* attrs = @{
+		NSForegroundColorAttributeName: entry->disabled() ? [NSColor tertiaryLabelColor] : [NSColor controlTextColor],
+		NSParagraphStyleAttributeName:  paragraphStyle
+	};
+	cell.textField.attributedStringValue = [[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:entry->name()] attributes:attrs];
+
+	NSMenu* menu = [NSMenu new];
+	if(bundles::item_ptr item = entry->represented_item())
+	{
+		NSString* imageName = entry->identifier() == "Menu Actions" ? @"MenuItem" : info_for(item->kind()).file;
+		NSImage* srcImage   = [NSImage imageNamed:imageName inSameBundleAsClass:[self class]];
+
+		cell.imageView.image = [NSImage imageWithSize:NSMakeSize(srcImage.size.width + 2, srcImage.size.height) flipped:NO drawingHandler:^BOOL(NSRect dstRect){
+			[srcImage drawInRect:NSMakeRect(NSMinX(dstRect)+2, NSMinY(dstRect), NSWidth(dstRect)-2, NSHeight(dstRect)) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1];
+			return YES;
+		}];
+
+		if(entry->identifier() == "Menu Actions")
+			return cell;
+
+		if(item->kind() == bundles::kItemTypeBundle)
 		{
-			paragraphStyle = [[NSMutableParagraphStyle alloc] init];
-			[paragraphStyle setLineBreakMode:NSLineBreakByTruncatingTail];
-		}
-
-		be::entry_ptr entry = parent_for_column(aBrowser, aColumn, bundles)->children()[aRow];
-
-		NSDictionary* attrs = @{
-			NSForegroundColorAttributeName: entry->disabled() ? [NSColor tertiaryLabelColor] : [NSColor controlTextColor],
-			NSParagraphStyleAttributeName:  paragraphStyle
-		};
-		[cell setAttributedStringValue:[[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:entry->name()] attributes:attrs]];
-		[cell setLeaf:!entry->has_children()];
-		[cell setLoaded:YES];
-
-		NSMenu* menu = [NSMenu new];
-		if(bundles::item_ptr item = entry->represented_item())
-		{
-			NSString* imageName = entry->identifier() == "Menu Actions" ? @"MenuItem" : info_for(item->kind()).file;
-			NSImage* srcImage   = [NSImage imageNamed:imageName inSameBundleAsClass:[self class]];
-
-			cell.image = [NSImage imageWithSize:NSMakeSize(srcImage.size.width + 2, srcImage.size.height) flipped:NO drawingHandler:^BOOL(NSRect dstRect){
-				[srcImage drawInRect:NSMakeRect(NSMinX(dstRect)+2, NSMinY(dstRect), NSWidth(dstRect)-2, NSHeight(dstRect)) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1];
-				return YES;
-			}];
-
-			if(entry->identifier() == "Menu Actions")
-				return;
-
-			if(item->kind() == bundles::kItemTypeBundle)
-			{
-				NSMenuItem* menuItem = [menu addItemWithTitle:@"Export Bundle…" action:@selector(exportBundle:) keyEquivalent:@""];
-				menuItem.target = self;
-				menuItem.representedObject = [NSString stringWithCxxString:item->uuid()];
-			}
-
-			auto paths = item->paths();
-			if(paths.size() == 1)
-			{
-				[menu addItem:[self createMenuItemForCxxPath:paths.front()]];
-			}
-			else if(paths.size() > 1)
-			{
-				NSMenu* submenu = [NSMenu new];
-				for(std::string const& path : paths)
-				{
-					NSMenuItem* item = [self createMenuItemForCxxPath:path];
-					item.title = [[NSString stringWithCxxString:path] stringByAbbreviatingWithTildeInPath];
-					[submenu addItem:item];
-				}
-
-				NSMenuItem* submenuItem = [menu addItemWithTitle:@"Show in Finder" action:nil keyEquivalent:@""];
-				submenuItem.submenu = submenu;
-			}
-
-			NSMenuItem* menuItem = [menu addItemWithTitle:@"Copy UUID" action:@selector(copyUUID:) keyEquivalent:@""];
+			NSMenuItem* menuItem = [menu addItemWithTitle:@"Export Bundle…" action:@selector(exportBundle:) keyEquivalent:@""];
 			menuItem.target = self;
 			menuItem.representedObject = [NSString stringWithCxxString:item->uuid()];
 		}
-		else
+
+		auto paths = item->paths();
+		if(paths.size() == 1)
 		{
-			std::string const& path = entry->represented_path();
-			if(path != NULL_STR)
+			[menu addItem:[self createMenuItemForCxxPath:paths.front()]];
+		}
+		else if(paths.size() > 1)
+		{
+			NSMenu* submenu = [NSMenu new];
+			for(std::string const& path : paths)
 			{
-				[cell setImage:[TMFileReference imageForURL:[NSURL fileURLWithPath:[NSFileManager.defaultManager stringWithFileSystemRepresentation:path.data() length:path.size()]] size:NSMakeSize(16, 16)]];
-				[menu addItem:[self createMenuItemForCxxPath:path]];
+				NSMenuItem* item = [self createMenuItemForCxxPath:path];
+				item.title = [[NSString stringWithCxxString:path] stringByAbbreviatingWithTildeInPath];
+				[submenu addItem:item];
+			}
+
+			NSMenuItem* submenuItem = [menu addItemWithTitle:@"Show in Finder" action:nil keyEquivalent:@""];
+			submenuItem.submenu = submenu;
+		}
+
+		NSMenuItem* menuItem = [menu addItemWithTitle:@"Copy UUID" action:@selector(copyUUID:) keyEquivalent:@""];
+		menuItem.target = self;
+		menuItem.representedObject = [NSString stringWithCxxString:item->uuid()];
+	}
+	else
+	{
+		std::string const& path = entry->represented_path();
+		if(path != NULL_STR)
+		{
+			cell.imageView.image = [TMFileReference imageForURL:[NSURL fileURLWithPath:[NSFileManager.defaultManager stringWithFileSystemRepresentation:path.data() length:path.size()]] size:NSMakeSize(16, 16)];
+			[menu addItem:[self createMenuItemForCxxPath:path]];
+		}
+	}
+	cell.menu = menu;
+	return cell;
+}
+
+- (void)outlineViewItemDidExpand:(NSNotification*)notification
+{
+	if(BEOutlineEntry* wrapper = notification.userInfo[@"NSObject"])
+		[expandedPaths addObject:wrapper->_path];
+}
+
+- (void)outlineViewItemDidCollapse:(NSNotification*)notification
+{
+	if(BEOutlineEntry* wrapper = notification.userInfo[@"NSObject"])
+		[expandedPaths removeObject:wrapper->_path];
+}
+
+// Apply a validated drop: plist edits first (per item, so memory and disk
+// stay consistent even if a later item fails), then the in-memory index.
+// The caller computed index against the pre-drop listing.
+- (BOOL)moveBundleItems:(NSArray*)uuidStrings toMenu:(oak::uuid_t const&)targetMenu atIndex:(size_t)index inBundle:(bundles::item_ptr const&)bundle
+{
+	if(!bundle || [uuidStrings count] == 0)
+		return NO;
+
+	std::vector<std::pair<oak::uuid_t, oak::uuid_t>> moves;
+	for(NSString* uuidString in uuidStrings)
+	{
+		oak::uuid_t uuid = to_s(uuidString);
+		bundles::item_ptr item = bundles::lookup(uuid);
+		if(!item || item->bundle() != bundle)
+			return NO;
+		moves.emplace_back(uuid, item->parent_menu());
+	}
+
+	auto base = changes.find(bundle);
+	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
+
+	size_t at = index;
+	for(auto const& move : moves)
+	{
+		// Removal is best-effort: items never explicitly listed (fresh
+		// leftovers) or a missing top-level array have no entry to remove.
+		// Insertion gates the move — it fails only for unknown menus.
+		std::string const itemStr = to_s(move.first), oldStr = to_s(move.second), newStr = to_s(targetMenu);
+		bundles::remove_uuid_from_main_menu(infoPlist, to_s(bundle->uuid()), oldStr, itemStr);
+		if(!bundles::insert_uuid_into_main_menu_at_index(infoPlist, to_s(bundle->uuid()), newStr, itemStr, at++))
+			return NO;
+		bundles::remove_from_menu(move.second, move.first);
+		bundles::add_to_menu_at_index(targetMenu, move.first, at - 1);
+	}
+
+	if(!plist::equal(infoPlist, bundle->plist()))
+		changes[bundle] = infoPlist;
+	[self didChangeModifiedState];
+	return YES;
+}
+
+// The drop parent is the outline parent for Above drops (or the row itself
+// for On drops). Only menu contexts accept: the Menu Actions root (addressed
+// by the bundle uuid) or a submenu. Everything else — kind groups, Other
+// Actions, Support files, bundle rows — keeps kind-driven placement.
+- (BOOL)dropTargetForParent:(BEOutlineEntry*)parent anchor:(BEOutlineEntry*)anchor appending:(BOOL)appending intoMenu:(oak::uuid_t*)outMenu atIndex:(size_t*)outIndex
+{
+	if(!parent)
+		return NO;
+
+	be::entry_ptr entry = parent->_entry;
+	bundles::item_ptr represented = entry->represented_item();
+	oak::uuid_t menu;
+	if(entry->identifier() == "Menu Actions" && represented && represented->kind() == bundles::kItemTypeBundle)
+		menu = represented->uuid();
+	else if(represented && represented->kind() == bundles::kItemTypeMenu)
+		menu = represented->uuid();
+	else
+		return NO;
+
+	size_t index = entry->children().size();
+	if(!appending && anchor)
+	{
+		for(size_t i = 0; i < entry->children().size(); ++i)
+		{
+			if(entry->children()[i]->identifier() == anchor->_entry->identifier())
+			{
+				index = i;
+				break;
 			}
 		}
-		[cell setMenu:menu];
 	}
+	*outMenu = menu;
+	*outIndex = index;
+	return YES;
+}
+
+- (NSArray*)draggedUUIDsFromPasteboard:(NSPasteboard*)pboard inBundle:(bundles::item_ptr const&)bundle
+{
+	NSArray* strings = [pboard propertyListForType:kBundleItemUUIDsPboardType];
+	if(![strings isKindOfClass:[NSArray class]] || [strings count] == 0)
+		return nil;
+	NSMutableArray* uuids = [NSMutableArray array];
+	for(id value in strings)
+	{
+		if(![value isKindOfClass:[NSString class]])
+			return nil;
+		bundles::item_ptr item = bundles::lookup(to_s((NSString*)value));
+		if(!item || !(item->kind() & bundles::kItemTypeMenuTypes) || item->bundle() != bundle)
+			return nil;
+		[uuids addObject:value];
+	}
+	return uuids;
+}
+
+- (BOOL)outlineView:(NSOutlineView*)anOutlineView writeItems:(NSArray*)items toPasteboard:(NSPasteboard*)pboard
+{
+	NSMutableArray* uuids = [NSMutableArray array];
+	for(BEOutlineEntry* wrapper in items)
+	{
+		bundles::item_ptr item = wrapper->_entry->represented_item();
+		if(!item || !(item->kind() & bundles::kItemTypeMenuTypes))
+			return NO;
+		[uuids addObject:[NSString stringWithCxxString:to_s(item->uuid())]];
+	}
+	if([uuids count] == 0)
+		return NO;
+	[pboard declareTypes:@[ kBundleItemUUIDsPboardType ] owner:self];
+	[pboard setPropertyList:uuids forType:kBundleItemUUIDsPboardType];
+	return YES;
+}
+
+- (NSDragOperation)outlineView:(NSOutlineView*)anOutlineView validateDrop:(id<NSDraggingInfo>)info proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)operation
+{
+	if(info.draggingSource != anOutlineView)
+		return NSDragOperationNone;
+
+	BEOutlineEntry* anchor = row < [anOutlineView numberOfRows] ? [anOutlineView itemAtRow:row] : nil;
+	BEOutlineEntry* parent = nil;
+	BOOL appending = NO;
+	if(operation == NSTableViewDropOn)
+	{
+		if(!anchor)
+			return NSDragOperationNone;
+		parent = anchor;
+		appending = YES;
+	}
+	else
+	{
+		if(row >= [anOutlineView numberOfRows])
+		{
+			// Below the last row: append to that row’s parent menu.
+			if([anOutlineView numberOfRows] == 0)
+				return NSDragOperationNone;
+			anchor = [anOutlineView itemAtRow:[anOutlineView numberOfRows] - 1];
+			parent = [anOutlineView parentForItem:anchor];
+			appending = YES;
+		}
+		else
+		{
+			if(!anchor)
+				return NSDragOperationNone;
+			parent = [anOutlineView parentForItem:anchor];
+		}
+	}
+
+	oak::uuid_t menu;
+	size_t index = 0;
+	if(![self dropTargetForParent:parent anchor:appending ? nil : anchor appending:appending intoMenu:&menu atIndex:&index])
+		return NSDragOperationNone;
+
+	// The payload names the bundle: submenu uuids are not bundles, so the
+	// target menu alone cannot identify it.
+	bundles::item_ptr bundle;
+	NSArray* strings = [info.draggingPasteboard propertyListForType:kBundleItemUUIDsPboardType];
+	if([strings isKindOfClass:[NSArray class]] && [strings count] != 0 && [strings[0] isKindOfClass:[NSString class]])
+	{
+		if(bundles::item_ptr first = bundles::lookup(to_s((NSString*)strings[0])))
+			bundle = first->bundle();
+	}
+	if(!bundle)
+		return NSDragOperationNone;
+
+	// The target menu must belong to the payload’s bundle.
+	BOOL sameBundle = (menu == bundle->uuid());
+	if(!sameBundle)
+	{
+		if(bundles::item_ptr menuItem = bundles::lookup(menu))
+			sameBundle = menuItem->kind() == bundles::kItemTypeMenu && menuItem->bundle() == bundle;
+	}
+	if(!sameBundle)
+		return NSDragOperationNone;
+
+	NSArray* uuids = [self draggedUUIDsFromPasteboard:info.draggingPasteboard inBundle:bundle];
+	if(!uuids)
+		return NSDragOperationNone;
+
+	// Dropping a single item onto its own slot is a no-op, not a move.
+	if([uuids count] == 1 && parent)
+	{
+		bundles::item_ptr item = bundles::lookup(to_s((NSString*)uuids[0]));
+		if(item && item->parent_menu() == menu)
+		{
+			size_t current = 0;
+			bool found = false;
+			for(auto const& sibling : parent->_entry->children())
+			{
+				if(sibling->represented_item() && sibling->represented_item()->uuid() == item->uuid())
+				{
+					found = true;
+					break;
+				}
+				++current;
+			}
+			if(found && (appending ? current + 1 >= parent->_entry->children().size() : index == current))
+				return NSDragOperationNone;
+		}
+	}
+	return NSDragOperationMove;
+}
+
+- (BOOL)outlineView:(NSOutlineView*)anOutlineView acceptDrop:(id<NSDraggingInfo>)info item:(id)targetItem childIndex:(NSInteger)index
+{
+	BEOutlineEntry* parent = nil;
+	BOOL appending = NO;
+	if(index == NSOutlineViewDropOnItemIndex)
+	{
+		parent = targetItem;
+		appending = YES;
+	}
+	else
+	{
+		parent = targetItem;
+	}
+
+	oak::uuid_t menu;
+	size_t at = 0;
+	if(![self dropTargetForParent:parent anchor:nil appending:appending intoMenu:&menu atIndex:&at])
+		return NO;
+	if(!appending)
+		at = index < 0 ? at : (size_t)index;
+
+	// Resolve the bundle through the payload (submenus are not bundles).
+	bundles::item_ptr bundle;
+	NSArray* strings = [info.draggingPasteboard propertyListForType:kBundleItemUUIDsPboardType];
+	if([strings isKindOfClass:[NSArray class]] && [strings count] != 0 && [strings[0] isKindOfClass:[NSString class]])
+	{
+		if(bundles::item_ptr first = bundles::lookup(to_s((NSString*)strings[0])))
+			bundle = first->bundle();
+	}
+	NSArray* uuids = bundle ? [self draggedUUIDsFromPasteboard:info.draggingPasteboard inBundle:bundle] : nil;
+	if(!uuids)
+		return NO;
+
+	// Adjust for dragged rows above the drop point within the same menu.
+	if(!appending)
+	{
+		be::entry_ptr entry = parent->_entry;
+		size_t above = 0;
+		for(size_t i = 0; i < (size_t)index && i < entry->children().size(); ++i)
+		{
+			if(bundles::item_ptr sibling = entry->children()[i]->represented_item())
+			{
+				NSString* siblingUUID = [NSString stringWithCxxString:to_s(sibling->uuid())];
+				if([uuids containsObject:siblingUUID])
+					++above;
+			}
+		}
+		at = at >= above ? at - above : 0;
+	}
+
+	if(![self moveBundleItems:uuids toMenu:menu atIndex:at inBundle:bundle])
+		return NO;
+
+	if(bundles::item_ptr first = bundles::lookup(to_s((NSString*)uuids[0])))
+		[self revealBundleItem:first];
+	return YES;
 }
 
 - (NSMenuItem*)createMenuItemForCxxPath:(std::string const&)path
@@ -825,17 +1266,16 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 		[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:path] ]];
 }
 
-// ====================
-// = NSBrowser Target =
-// ====================
+// ===================
+// = Outline selection =
+// ===================
 
-- (IBAction)browserSelectionDidChange:(id)sender
+- (void)outlineSelectionDidChange:(NSNotification*)notification
 {
-	NSInteger aColumn = [browser selectedColumn];
-	NSInteger aRow    = aColumn != -1 ? [browser selectedRowInColumn:aColumn] : -1;
-	if(aColumn != -1 && aRow != -1)
+	NSInteger row = [outlineView selectedRow];
+	if(row != -1)
 	{
-		if(bundles::item_ptr item = parent_for_column(browser, aColumn, bundles)->children()[aRow]->represented_item())
+		if(bundles::item_ptr item = ((BEOutlineEntry*)[outlineView itemAtRow:row])->_entry->represented_item())
 		{
 			if(item->kind() != bundles::kItemTypeMenu && item->kind() != bundles::kItemTypeMenuItemSeparator)
 				[self setBundleItem:item];

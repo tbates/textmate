@@ -28,6 +28,15 @@ namespace bundles
 	// insert_uuid_into_main_menu() on the bundle’s info.plist dictionary.
 	void add_to_menu (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, oak::uuid_t const& after_uuid = oak::uuid_t());
 
+	// Insert item_uuid at index in the menu (clamped to the end),
+	// de-duplicated, updating the item’s parent menu. In-memory index only.
+	void add_to_menu_at_index (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, size_t index);
+
+	// Remove item_uuid from the menu, resetting the item’s parent menu to its
+	// bundle. In-memory index only; persist with remove_uuid_from_main_menu().
+	// Unknown menus or entries are a no-op.
+	void remove_from_menu (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid);
+
 	std::vector<item_ptr> query (std::string const& field, std::string const& value, scope::context_t const& scope = scope::wildcard, int kind = kItemTypeMost, oak::uuid_t const& bundle = oak::uuid_t(), bool filter = true, bool includeDisabledItems = false, bool resolveProxyItems = true);
 	std::vector<item_ptr> items_for_proxy (item_ptr proxyItem, scope::context_t const& scope = scope::wildcard, int kind = kItemTypeCommand|kItemTypeDragCommand|kItemTypeGrammar|kItemTypeMacro|kItemTypeSnippet|kItemTypeProxy|kItemTypeTheme, oak::uuid_t const& bundle = oak::uuid_t(), bool filter = true, bool includeDisabledItems = false);
 	item_ptr lookup (oak::uuid_t const& uuid);
