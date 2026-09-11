@@ -30,8 +30,11 @@ jobs:
       - name: Build TextMate.app
         run: cmake --build build --target TextMate
 
+      - name: Zip TextMate.app
+        run: /usr/bin/ditto -c -k --keepParent build/Applications/TextMate/TextMate.app "$RUNNER_TEMP/TextMate.zip"
+
       - name: Upload TextMate.app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: TextMate-${{ github.sha }}
-          path: build/Applications/TextMate/TextMate.app
+          path: ${{ runner.temp }}/TextMate.zip
