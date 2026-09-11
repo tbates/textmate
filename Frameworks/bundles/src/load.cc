@@ -19,6 +19,72 @@ static std::vector<oak::uuid_t> to_menu (plist::array_t const& uuids, std::strin
 	return res;
 }
 
+bool bundles::insert_uuid_into_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid, std::string const& after_uuid)
+{
+	if(!oak::uuid_t::is_valid(menu_uuid) || !oak::uuid_t::is_valid(item_uuid))
+		return false;
+
+	auto main_menu_it = info_plist.find("mainMenu");
+	plist::dictionary_t* main_menu = main_menu_it != info_plist.end() ? plist::get<plist::dictionary_t>(&main_menu_it->second) : nullptr;
+	if(!main_menu)
+		return false;
+
+	plist::array_t* items = nullptr;
+	if(menu_uuid == bundle_uuid)
+	{
+		auto items_it = main_menu->find("items");
+		if(items_it == main_menu->end())
+			items_it = main_menu->emplace("items", plist::array_t()).first;
+		items = plist::get<plist::array_t>(&items_it->second);
+	}
+	else
+	{
+		if(auto sub_menus_it = main_menu->find("submenus"); sub_menus_it != main_menu->end())
+		{
+			if(plist::dictionary_t* sub_menus = plist::get<plist::dictionary_t>(&sub_menus_it->second))
+			{
+				if(auto sub_menu_it = sub_menus->find(menu_uuid); sub_menu_it != sub_menus->end())
+				{
+					if(plist::dictionary_t* sub_menu = plist::get<plist::dictionary_t>(&sub_menu_it->second))
+					{
+						if(auto items_it = sub_menu->find("items"); items_it != sub_menu->end())
+							items = plist::get<plist::array_t>(&items_it->second);
+					}
+				}
+			}
+		}
+	}
+	if(!items)
+		return false;
+
+	for(auto const& entry : *items)
+	{
+		if(std::string const* str = plist::get<std::string>(&entry))
+		{
+			if(*str == item_uuid)
+				return true;
+		}
+	}
+
+	auto it = items->end();
+	if(!after_uuid.empty())
+	{
+		for(auto probe = items->begin(); probe != items->end(); ++probe)
+		{
+			if(std::string const* str = plist::get<std::string>(&*probe))
+			{
+				if(*str == after_uuid)
+				{
+					it = probe + 1;
+					break;
+				}
+			}
+		}
+	}
+	items->insert(it, plist::any_t(item_uuid));
+	return true;
+}
+
 static void remove_cycles (oak::uuid_t const& menuUUID, std::map< oak::uuid_t, std::vector<oak::uuid_t> >& menus, std::set<oak::uuid_t> parents = { })
 {
 	auto pair = menus.find(menuUUID);

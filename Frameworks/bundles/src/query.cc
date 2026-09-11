@@ -1,4 +1,5 @@
 #include "query.h"
+#include <algorithm>
 #include <text/ctype.h>
 #include <text/parse.h>
 #include <text/trim.h>
@@ -181,6 +182,25 @@ namespace bundles
 	{
 		Callbacks(&callback_t::bundles_will_change);
 		AllItems.push_back(item);
+		cache().clear();
+		Callbacks(&callback_t::bundles_did_change);
+	}
+
+	void add_to_menu (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, oak::uuid_t const& after_uuid)
+	{
+		if(!menu_uuid || !item_uuid)
+			return;
+
+		Callbacks(&callback_t::bundles_will_change);
+
+		std::vector<oak::uuid_t>& members = AllMenus[menu_uuid];
+		members.erase(std::remove(members.begin(), members.end(), item_uuid), members.end());
+		auto after = after_uuid ? std::find(members.begin(), members.end(), after_uuid) : members.end();
+		members.insert(after == members.end() ? members.end() : after + 1, item_uuid);
+
+		if(item_ptr item = lookup(item_uuid))
+			item->set_parent_menu(menu_uuid);
+
 		cache().clear();
 		Callbacks(&callback_t::bundles_did_change);
 	}

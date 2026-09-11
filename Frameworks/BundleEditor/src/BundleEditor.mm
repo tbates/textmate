@@ -358,6 +358,72 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 // = Action Methods =
 // ==================
 
+// Place a newly created menu-type item into the selected menu: a selected
+// menu (or “Menu Actions”) becomes the parent, a selected leaf means “below
+// this item”. Anything else — kind groups, Support files, an empty or
+// group-level selection — keeps the legacy behavior. Both the in-memory index
+// (via add_to_menu) and the bundle’s info.plist mainMenu (via the changes map,
+// so it is saved by saveDocument:) are updated; if the plist edit fails the
+// in-memory index is left untouched so a reload cannot lose the placement.
+- (void)placeNewBundleItem:(bundles::item_ptr const&)item ofType:(bundles::kind_t)aType inBundle:(bundles::item_ptr const&)bundle
+{
+	if(!(aType & bundles::kItemTypeMenuTypes) || !bundle)
+		return;
+
+	NSInteger selectedColumn = [browser selectedColumn];
+	if(selectedColumn < 1)
+		return;
+
+	oak::uuid_t menuContext;
+	be::entry_ptr entry = bundles;
+	for(NSInteger col = 0; col <= selectedColumn; ++col)
+	{
+		NSInteger row = [browser selectedRowInColumn:col];
+		if(row == -1 || row >= (NSInteger)entry->children().size())
+			return;
+		entry = entry->children()[row];
+		if(col > 0)
+		{
+			if(bundles::item_ptr represented = entry->represented_item())
+			{
+				if(represented->kind() == bundles::kItemTypeMenu)
+					menuContext = represented->uuid();
+				else if(entry->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
+					menuContext = represented->uuid();
+			}
+		}
+	}
+
+	oak::uuid_t targetMenu;
+	oak::uuid_t afterItem;
+	if(bundles::item_ptr represented = entry->represented_item())
+	{
+		if(represented->kind() == bundles::kItemTypeMenu)
+			targetMenu = represented->uuid();
+		else if(menuContext && !entry->has_children())
+		{
+			targetMenu = menuContext;
+			if(represented->parent_menu() == menuContext)
+				afterItem = represented->uuid();
+		}
+	}
+	else if(entry->identifier() == "Menu Actions")
+	{
+		targetMenu = bundle->uuid();
+	}
+	if(!targetMenu)
+		return;
+
+	std::string const afterUUID = afterItem ? to_s(afterItem) : std::string();
+	auto base = changes.find(bundle);
+	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
+	if(!bundles::insert_uuid_into_main_menu(infoPlist, to_s(bundle->uuid()), to_s(targetMenu), to_s(item->uuid()), afterUUID))
+		return;
+	if(!plist::equal(infoPlist, bundle->plist()))
+		changes[bundle] = infoPlist;
+	bundles::add_to_menu(targetMenu, item->uuid(), afterItem);
+}
+
 - (void)createItemOfType:(bundles::kind_t)aType
 {
 	NSString* path = [[NSBundle bundleForClass:[self class]] pathForResource:info_for(aType).file ofType:@"plist"];
@@ -383,6 +449,7 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 		item->set_plist(plist);
 		changes.emplace(item, plist);
 		bundles::add_item(item);
+		[self placeNewBundleItem:item ofType:aType inBundle:bundle];
 		[self revealBundleItem:item];
 		[self didChangeModifiedState];
 	}

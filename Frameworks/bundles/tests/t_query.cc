@@ -234,3 +234,102 @@ void test_require ()
 	std::string pathSuffix = "/Bundles/Dialog.tmbundle/Support/bin";
 	OAK_ASSERT_EQ(dialogPath.find(pathSuffix) + pathSuffix.size(), dialogPath.size());
 }
+
+namespace
+{
+	std::string const BundleUUID = "B0B94C92-1870-491C-A928-9528387EEACA";
+	std::string const MenuUUID   = "C1CA5D03-2981-402D-B039-A63949FBDA12";
+	std::string const FirstUUID  = "D2DB6E14-3A92-513E-C14A-B74A5A0CCE2";
+	std::string const SecondUUID = "E3EC7F25-4BA3-624F-D25B-C85B6B1DDF3";
+	std::string const ThirdUUID  = "F4FD8036-5CB4-7350-E36C-D96C7C2EE04";
+
+	plist::dictionary_t make_info_plist ()
+	{
+		return plist::dictionary_t{
+			{ "mainMenu", plist::dictionary_t{
+				{ "items", plist::array_t{ plist::any_t(FirstUUID), plist::any_t(SecondUUID) } },
+				{ "submenus", plist::dictionary_t{
+					{ MenuUUID, plist::dictionary_t{
+						{ "name", plist::any_t("Extras") },
+						{ "items", plist::array_t{ plist::any_t(FirstUUID) } },
+					} },
+				} },
+			} },
+		};
+	}
+
+	std::vector<std::string> items_at (plist::dictionary_t const& info, std::string const& keyPath)
+	{
+		plist::array_t items;
+		if(!plist::get_key_path(info, keyPath, items))
+			return std::vector<std::string>();
+		std::vector<std::string> res;
+		for(auto const& entry : items)
+		{
+			if(std::string const* str = plist::get<std::string>(&entry))
+				res.push_back(*str);
+		}
+		return res;
+	}
+}
+
+void test_insert_uuid_into_main_menu ()
+{
+	// Append to the top-level menu …
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu(info, BundleUUID, BundleUUID, ThirdUUID));
+		auto items = items_at(info, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 3);
+		OAK_ASSERT_EQ(items[2], ThirdUUID);
+	}
+
+	// … or directly after the selected sibling.
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu(info, BundleUUID, BundleUUID, ThirdUUID, FirstUUID));
+		auto items = items_at(info, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 3);
+		OAK_ASSERT_EQ(items[0], FirstUUID);
+		OAK_ASSERT_EQ(items[1], ThirdUUID);
+		OAK_ASSERT_EQ(items[2], SecondUUID);
+	}
+
+	// Unknown sibling falls back to append; existing entries are not duplicated.
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu(info, BundleUUID, BundleUUID, ThirdUUID, MenuUUID));
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").back(), ThirdUUID);
+
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu(info, BundleUUID, BundleUUID, FirstUUID));
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").size(), 3);
+	}
+
+	// Submenu placement keeps the submenu’s name and other menus untouched.
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu(info, BundleUUID, MenuUUID, SecondUUID, FirstUUID));
+		auto items = items_at(info, "mainMenu.submenus." + MenuUUID + ".items");
+		OAK_ASSERT_EQ(items.size(), 2);
+		OAK_ASSERT_EQ(items[0], FirstUUID);
+		OAK_ASSERT_EQ(items[1], SecondUUID);
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").size(), 2);
+
+		std::string name;
+		OAK_ASSERT(plist::get_key_path(info, "mainMenu.submenus." + MenuUUID + ".name", name));
+		OAK_ASSERT_EQ(name, "Extras");
+	}
+
+	// Unknown menus and malformed input fail without touching the plist.
+	{
+		plist::dictionary_t info = make_info_plist();
+		plist::dictionary_t const original = info;
+		OAK_ASSERT(!bundles::insert_uuid_into_main_menu(info, BundleUUID, ThirdUUID, SecondUUID));
+		OAK_ASSERT(!bundles::insert_uuid_into_main_menu(info, BundleUUID, BundleUUID, "not-a-uuid"));
+		OAK_ASSERT(plist::equal(info, original));
+
+		plist::dictionary_t empty;
+		OAK_ASSERT(!bundles::insert_uuid_into_main_menu(empty, BundleUUID, BundleUUID, ThirdUUID));
+		OAK_ASSERT(empty.empty());
+	}
+}

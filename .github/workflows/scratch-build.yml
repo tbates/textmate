@@ -1,0 +1,37 @@
+# Fork-only helper (tbates): on-demand TextMate.app artifacts for trying out
+# local changes without building locally. Builds on every push to main and on
+# manual dispatch, then keeps the app as a downloadable artifact on the run.
+# Never send upstream: strip this file from any branch before opening a PR
+# against textmatelives/textmate.
+name: Scratch Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          brew install multimarkdown ninja mercurial subversion
+          command -v cmake >/dev/null || brew install cmake
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build TextMate.app
+        run: cmake --build build --target TextMate
+
+      - name: Upload TextMate.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextMate-${{ github.sha }}
+          path: build/Applications/TextMate/TextMate.app
