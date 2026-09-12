@@ -56,6 +56,7 @@
 - (void)didChangeModifiedState;
 - (void)resetPanes;
 - (void)selectFirstRows;
+- (void)addInsertItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
 - (void)appendPaneWithEntries:(std::vector<be::entry_ptr> const&)entries;
 - (void)truncatePanesAfter:(NSInteger)pane;
 - (void)layoutPanes;
@@ -861,6 +862,34 @@ static CGFloat const kPaneWidth = 190;
 	return [self cellViewForEntry:paneEntries[pane][row] inTableView:tableView];
 }
 
+- (void)addInsertItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView
+{
+	// “Below here” inserts into the anchor row’s own menu. Separators share
+	// one item, so the anchor travels as (pane, row), not uuid.
+	NSInteger anchorPane = [self columnIndexForTableView:tableView];
+	if(![self menuContextForPane:anchorPane])
+		return;
+	NSInteger anchorRow = -1;
+	for(size_t i = 0; i < paneEntries[anchorPane].size(); ++i)
+	{
+		if(paneEntries[anchorPane][i] == entry)
+		{
+			anchorRow = i;
+			break;
+		}
+	}
+	if(anchorRow == -1)
+		return;
+	[menu addItem:[NSMenuItem separatorItem]];
+	NSArray* anchor = @[ @(anchorPane), @(anchorRow) ];
+	NSMenuItem* submenuItem = [menu addItemWithTitle:@"Insert New Category Below Here" action:@selector(insertMenuBelowAnchor:) keyEquivalent:@""];
+	submenuItem.target = self;
+	submenuItem.representedObject = anchor;
+	NSMenuItem* dividerItem = [menu addItemWithTitle:@"Insert Divider Here" action:@selector(insertSeparatorBelowAnchor:) keyEquivalent:@""];
+	dividerItem.target = self;
+	dividerItem.representedObject = anchor;
+}
+
 - (NSView*)cellViewForEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView
 {
 	NSTableCellView* cell = [tableView makeViewWithIdentifier:@"BundleItemCell" owner:self];
@@ -906,7 +935,11 @@ static CGFloat const kPaneWidth = 190;
 		}];
 
 		if(entry->identifier() == "Menu Actions")
+		{
+			[self addInsertItemsToMenu:menu forEntry:entry inTableView:tableView];
+			cell.menu = menu;
 			return cell;
+		}
 
 		if(item->kind() == bundles::kItemTypeBundle)
 		{
@@ -937,33 +970,7 @@ static CGFloat const kPaneWidth = 190;
 		NSMenuItem* menuItem = [menu addItemWithTitle:@"Copy UUID" action:@selector(copyUUID:) keyEquivalent:@""];
 		menuItem.target = self;
 		menuItem.representedObject = [NSString stringWithCxxString:item->uuid()];
-
-		// “Below here” inserts into the anchor row’s own menu. Separators
-		// share one item, so the anchor travels as (pane, row), not uuid.
-		NSInteger anchorPane = [self columnIndexForTableView:tableView];
-		if([self menuContextForPane:anchorPane])
-		{
-			NSInteger anchorRow = -1;
-			for(size_t i = 0; i < paneEntries[anchorPane].size(); ++i)
-			{
-				if(paneEntries[anchorPane][i] == entry)
-				{
-					anchorRow = i;
-					break;
-				}
-			}
-			if(anchorRow != -1)
-			{
-				[menu addItem:[NSMenuItem separatorItem]];
-				NSArray* anchor = @[ @(anchorPane), @(anchorRow) ];
-				NSMenuItem* submenuItem = [menu addItemWithTitle:@"Insert New Category Below Here" action:@selector(insertMenuBelowAnchor:) keyEquivalent:@""];
-				submenuItem.target = self;
-				submenuItem.representedObject = anchor;
-				NSMenuItem* dividerItem = [menu addItemWithTitle:@"Insert Divider Here" action:@selector(insertSeparatorBelowAnchor:) keyEquivalent:@""];
-				dividerItem.target = self;
-				dividerItem.representedObject = anchor;
-			}
-		}
+		[self addInsertItemsToMenu:menu forEntry:entry inTableView:tableView];
 	}
 	else
 	{
