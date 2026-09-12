@@ -461,3 +461,45 @@ void test_notification_batch ()
 	bundles::remove_callback(&counter);
 	bundles::remove_from_menu(menu, item);
 }
+
+void test_callback_destroyed_mid_dispatch_is_skipped ()
+{
+	// A handler may tear down documents whose destruction unregisters a
+	// later callback (grammars live and die with their owners). The
+	// in-flight dispatch must skip the stale entry, not call into it.
+	struct victim_t : bundles::callback_t
+	{
+		int* count;
+		victim_t (int* count) : count(count) { }
+		void bundles_did_change () { ++(*count); }
+	};
+	struct killer_t : bundles::callback_t
+	{
+		victim_t* victim = nullptr;
+		int count = 0;
+		void bundles_did_change ()
+		{
+			++count;
+			bundles::remove_callback(victim);
+			delete victim;
+			victim = nullptr;
+		}
+	};
+
+	int victimCount = 0;
+	killer_t killer;
+	killer.victim = new victim_t(&victimCount);
+	bundles::add_callback(&killer);
+	bundles::add_callback(killer.victim);
+
+	oak::uuid_t const menu = oak::uuid_t().generate();
+	oak::uuid_t const item = oak::uuid_t().generate();
+	bundles::add_to_menu(menu, item);
+
+	OAK_ASSERT_EQ(killer.count, 1);
+	OAK_ASSERT(!killer.victim);
+	OAK_ASSERT_EQ(victimCount, 0);
+
+	bundles::remove_callback(&killer);
+	bundles::remove_from_menu(menu, item);
+}
