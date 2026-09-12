@@ -24,7 +24,17 @@ static plist::array_t* main_menu_items (plist::dictionary_t& info_plist, std::st
 	auto main_menu_it = info_plist.find("mainMenu");
 	plist::dictionary_t* main_menu = main_menu_it != info_plist.end() ? plist::get<plist::dictionary_t>(&main_menu_it->second) : nullptr;
 	if(!main_menu)
-		return nullptr;
+	{
+		// Bundles that never had an explicit order (fresh leftovers) have no
+		// mainMenu at all: materialize it so a validated drop can persist.
+		// Removal stays best-effort and never creates structure.
+		if(!createTopLevel)
+			return nullptr;
+		main_menu_it = info_plist.emplace("mainMenu", plist::dictionary_t()).first;
+		main_menu = plist::get<plist::dictionary_t>(&main_menu_it->second);
+		if(!main_menu)
+			return nullptr;
+	}
 
 	if(menu_uuid == bundle_uuid)
 	{
@@ -46,8 +56,19 @@ static plist::array_t* main_menu_items (plist::dictionary_t& info_plist, std::st
 			{
 				if(plist::dictionary_t* sub_menu = plist::get<plist::dictionary_t>(&sub_menu_it->second))
 				{
-					if(auto items_it = sub_menu->find("items"); items_it != sub_menu->end())
-						return plist::get<plist::array_t>(&items_it->second);
+					auto items_it = sub_menu->find("items");
+					if(items_it == sub_menu->end())
+					{
+						// A known submenu entry with no items array yet
+						// (hand-edited plist): materialize the array, keeping
+						// the entry’s name. A missing entry stays a failure —
+						// the loader drops nameless submenu records, so
+						// inventing one here would lose the menu on reload.
+						if(!createTopLevel)
+							return nullptr;
+						items_it = sub_menu->emplace("items", plist::array_t()).first;
+					}
+					return plist::get<plist::array_t>(&items_it->second);
 				}
 			}
 		}

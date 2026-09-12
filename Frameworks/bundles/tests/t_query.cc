@@ -327,10 +327,22 @@ void test_insert_uuid_into_main_menu ()
 		OAK_ASSERT(!bundles::insert_uuid_into_main_menu(info, BundleUUID, ThirdUUID, SecondUUID));
 		OAK_ASSERT(!bundles::insert_uuid_into_main_menu(info, BundleUUID, BundleUUID, "not-a-uuid"));
 		OAK_ASSERT(plist::equal(info, original));
+	}
 
+	// A bundle with no mainMenu at all (never explicitly ordered, e.g. fresh
+	// leftovers) gets one, so a validated drop persists instead of failing
+	// silently on the plist gate while the panes already accepted it.
+	{
 		plist::dictionary_t empty;
-		OAK_ASSERT(!bundles::insert_uuid_into_main_menu(empty, BundleUUID, BundleUUID, ThirdUUID));
-		OAK_ASSERT(empty.empty());
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu(empty, BundleUUID, BundleUUID, ThirdUUID));
+		auto items = items_at(empty, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 1);
+		OAK_ASSERT_EQ(items[0], ThirdUUID);
+
+		// Removal still never creates structure.
+		plist::dictionary_t bare;
+		OAK_ASSERT(!bundles::remove_uuid_from_main_menu(bare, BundleUUID, BundleUUID, ThirdUUID));
+		OAK_ASSERT(bare.empty());
 	}
 }
 
@@ -354,6 +366,36 @@ void test_move_uuid_within_main_menu ()
 		OAK_ASSERT(bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, MenuUUID, ThirdUUID, 0));
 		OAK_ASSERT_EQ(items_at(info, "mainMenu.submenus." + MenuUUID + ".items")[0], ThirdUUID);
 		OAK_ASSERT(!bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, ThirdUUID, SecondUUID, 0));
+	}
+
+	// Index insertion materializes a missing top-level menu as well.
+	{
+		plist::dictionary_t empty;
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu_at_index(empty, BundleUUID, BundleUUID, FirstUUID, 0));
+		auto items = items_at(empty, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 1);
+		OAK_ASSERT_EQ(items[0], FirstUUID);
+	}
+
+	// A known submenu entry with no items array (hand-edited plist) is
+	// materialized with its name intact; an unknown submenu still fails.
+	{
+		plist::dictionary_t info = make_info_plist();
+		auto mainMenu = plist::get<plist::dictionary_t>(&info["mainMenu"]);
+		OAK_ASSERT(mainMenu);
+		auto submenus = plist::get<plist::dictionary_t>(&(*mainMenu)["submenus"]);
+		OAK_ASSERT(submenus);
+		auto submenu = plist::get<plist::dictionary_t>(&(*submenus)[MenuUUID]);
+		OAK_ASSERT(submenu);
+		submenu->erase("items");
+
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, MenuUUID, SecondUUID, 0));
+		auto items = items_at(info, "mainMenu.submenus." + MenuUUID + ".items");
+		OAK_ASSERT_EQ(items.size(), 1);
+		OAK_ASSERT_EQ(items[0], SecondUUID);
+		std::string name;
+		OAK_ASSERT(plist::get_key_path(info, "mainMenu.submenus." + MenuUUID + ".name", name));
+		OAK_ASSERT_EQ(name, "Extras");
 	}
 
 	// Removal composes with insertion into a move across menus.

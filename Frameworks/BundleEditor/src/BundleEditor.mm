@@ -495,17 +495,18 @@ static CGFloat const kPaneWidth = 190;
 			for(++stack.back().second; stack.back().second < stack.back().first.size(); ++stack.back().second)
 			{
 				be::entry_ptr entry = stack.back().first[stack.back().second];
-				if(entry->has_children())
-				{
-					stack.emplace_back(entry->children(), -1);
-				}
-				else if(entry->represented_item() == anItem)
+				// Match before descending: submenu rows are containers, and
+				// the old leaf-only check made reveal-after-drop silently do
+				// nothing for a moved submenu.
+				if(entry->represented_item() == anItem)
 				{
 					NSMutableArray* path = [base mutableCopy];
 					for(size_t j = 0; j < stack.size(); ++j)
 						[path addObject:[NSString stringWithCxxString:stack[j].first[stack[j].second]->identifier()]];
 					return path;
 				}
+				if(entry->has_children())
+					stack.emplace_back(entry->children(), -1);
 			}
 		}
 	}
@@ -999,7 +1000,10 @@ static CGFloat const kPaneWidth = 190;
 		oak::uuid_t uuid = to_s(uuidString);
 		bundles::item_ptr item = bundles::lookup(uuid);
 		if(!item || item->bundle() != bundle)
+		{
+			os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop rejected, dragged item %{public}s not found in bundle", to_s(uuid).c_str());
 			return NO;
+		}
 		moves.emplace_back(uuid, item->parent_menu());
 	}
 
@@ -1011,18 +1015,31 @@ static CGFloat const kPaneWidth = 190;
 		// One notification for the whole drop: per-item dispatches would
 		// rebuild the panes on half-moved state between detach and insert.
 		bundles::notification_batch_t batch;
+		// Phase 1 — plist edits on the copy. Any insert failure discards the
+		// copy here, before the in-memory index is touched.
+		std::string const bundleStr = to_s(bundle->uuid()), newStr = to_s(targetMenu);
+		size_t insertAt = at;
 		for(auto const& move : moves)
 		{
 			// Removal is best-effort: items never explicitly listed (fresh
 			// leftovers) or a missing top-level array have no entry to remove.
 			// Insertion gates the move — it fails only for unknown menus.
-			std::string const itemStr = to_s(move.first), oldStr = to_s(move.second), newStr = to_s(targetMenu);
-			bundles::remove_uuid_from_main_menu(infoPlist, to_s(bundle->uuid()), oldStr, itemStr);
-			if(!bundles::insert_uuid_into_main_menu_at_index(infoPlist, to_s(bundle->uuid()), newStr, itemStr, at++))
+			std::string const itemStr = to_s(move.first), oldStr = to_s(move.second);
+			bundles::remove_uuid_from_main_menu(infoPlist, bundleStr, oldStr, itemStr);
+			if(!bundles::insert_uuid_into_main_menu_at_index(infoPlist, bundleStr, newStr, itemStr, insertAt++))
+			{
+				os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop rejected, menu %{public}s not in info.plist", newStr.c_str());
 				return NO;
-			bundles::remove_from_menu(move.second, move.first);
-			bundles::add_to_menu_at_index(targetMenu, move.first, at - 1);
+			}
 		}
+		// Phase 2 — in-memory index. Detach everything first, then insert in
+		// drag order, so a multi-select block moved down within one menu
+		// keeps its order instead of scattering.
+		for(auto const& move : moves)
+			bundles::remove_from_menu(move.second, move.first);
+		insertAt = at;
+		for(auto const& move : moves)
+			bundles::add_to_menu_at_index(targetMenu, move.first, insertAt++);
 	}
 
 	if(!plist::equal(infoPlist, bundle->plist()))
@@ -1229,7 +1246,10 @@ static CGFloat const kPaneWidth = 190;
 	{
 		menu = [self menuContextForPane:pane];
 		if(!menu)
+		{
+			os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop rejected, no menu owns pane %ld", (long)pane);
 			return NO;
+		}
 		if(operation == NSTableViewDropOn && row >= 0 && row < (NSInteger)paneEntries[pane].size())
 		{
 			if(bundles::item_ptr anchor = paneEntries[pane][row]->represented_item())
@@ -1246,6 +1266,7 @@ static CGFloat const kPaneWidth = 190;
 			}
 			else
 			{
+				os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop rejected, anchor row %ld has no item", (long)row);
 				return NO;
 			}
 		}
@@ -1284,7 +1305,10 @@ static CGFloat const kPaneWidth = 190;
 	}
 	NSArray* uuids = bundle ? [self draggedUUIDsFromPasteboard:info.draggingPasteboard inBundle:bundle] : nil;
 	if(!uuids)
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop rejected, dragged payload names no bundle items");
 		return NO;
+	}
 
 	// Adjust for dragged rows above the drop point within the same menu.
 	if(pane == lastPane && operation != NSTableViewDropOn)
@@ -1303,7 +1327,10 @@ static CGFloat const kPaneWidth = 190;
 	}
 
 	if(![self moveBundleItems:uuids toMenu:menu atIndex:at inBundle:bundle])
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop rejected, move of %lu item(s) failed", (unsigned long)[uuids count]);
 		return NO;
+	}
 
 	if(bundles::item_ptr first = bundles::lookup(to_s((NSString*)uuids[0])))
 		[self revealBundleItem:first];
