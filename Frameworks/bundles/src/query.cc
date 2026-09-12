@@ -23,7 +23,7 @@ namespace bundles
 		if(notification_depth)
 			notifications_dirty = true;
 		else
-			notify_changed();
+			Callbacks(&callback_t::bundles_did_change);
 	}
 
 	void suspend_notifications ()
