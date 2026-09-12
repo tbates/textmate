@@ -26,9 +26,11 @@ bool insert_uuid_into_main_menu_at_index (plist::dictionary_t& info_plist, std::
 bool remove_uuid_from_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid);
 
 // Insert a divider into the addressed menu’s items array at index (clamped
-// to the end), de-duplicated. Same addressing as above, except separators
-// are stored as the divider token rather than a uuid. Returns false without
-// touching info_plist when either uuid is invalid or the menu is missing.
+// to the end). Same addressing as above, except separators are stored as
+// the divider token rather than a uuid — and unlike the uuid insert this
+// never de-duplicates, since dividers share one token and erasing it would
+// take out every divider in the menu. Returns false without touching
+// info_plist when either uuid is invalid or the menu is missing.
 bool insert_separator_into_main_menu_at_index (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, size_t index);
 
 // Create mainMenu.submenus.<submenu_uuid> = { name, items:() } so a fresh

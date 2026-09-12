@@ -144,7 +144,8 @@ bool bundles::insert_separator_into_main_menu_at_index (plist::dictionary_t& inf
 	if(!items)
 		return false;
 
-	erase_uuid_from_array(*items, kSeparatorString);
+	// No erase-all first: dividers share one token, so de-duplicating here
+	// would delete every divider already in the menu.
 	items->insert(items->begin() + std::min(index, items->size()), plist::any_t(kSeparatorString));
 	return true;
 }

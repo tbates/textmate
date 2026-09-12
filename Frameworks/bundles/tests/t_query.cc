@@ -483,6 +483,19 @@ void test_submenu_and_separator_main_menu ()
 		OAK_ASSERT(!bundles::remove_separator_from_main_menu_at_index(info, BundleUUID, "not-a-uuid", 0));
 		OAK_ASSERT(plist::equal(info, original));
 	}
+
+	// Inserting a divider never collapses the dividers already there: they
+	// share one token, so an erase-all-first would take them all out.
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, BundleUUID, 1));
+		OAK_ASSERT(bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, BundleUUID, 1));
+		auto items = items_at(info, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 4);
+		OAK_ASSERT_EQ(items[0], FirstUUID);
+		OAK_ASSERT_EQ(items[3], SecondUUID);
+		OAK_ASSERT_EQ(items[1], items[2]);
+	}
 }
 
 void test_notification_batch ()
@@ -617,6 +630,18 @@ void test_remove_separator_from_menu_at_index ()
 		OAK_ASSERT_EQ(members.size(), 2);
 		OAK_ASSERT(members[0] == firstUUID);
 		OAK_ASSERT(members[1] == secondUUID);
+	}
+
+	// Divider inserts do not collapse: the ones already there survive.
+	bundles::add_to_menu_at_index(menuUUID, sepUUID, 1, false);
+	bundles::add_to_menu_at_index(menuUUID, sepUUID, 1, false);
+	{
+		auto members = member_uuids();
+		OAK_ASSERT_EQ(members.size(), 4);
+		OAK_ASSERT(members[0] == firstUUID);
+		OAK_ASSERT(members[1] == sepUUID);
+		OAK_ASSERT(members[2] == sepUUID);
+		OAK_ASSERT(members[3] == secondUUID);
 	}
 
 	// This test replaces the shared index: rebuild the standard fixtures for

@@ -440,7 +440,10 @@ static CGFloat const kPaneWidth = 190;
 			if(paneEntries[pane][row]->identifier() == to_s(identifier))
 			{
 				[paneTables[pane] selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
-				if(scroll && pane == (NSInteger)[path count] - 1)
+				// Every matched pane scrolls, not just the last: after a
+				// rebuild (save/reload) fresh tables otherwise show row 0
+				// while the selection sits off-screen below.
+				if(scroll)
 					[paneTables[pane] scrollRowToVisible:row];
 				break;
 			}
@@ -547,7 +550,7 @@ static CGFloat const kPaneWidth = 190;
 
 	bundles = be::bundle_entries();
 	[self resetPanes];
-	[self selectIdentifierPath:savedPath scroll:NO];
+	[self selectIdentifierPath:savedPath scroll:YES];
 }
 
 // Identifier path (bundle, component, item) locating anItem in the tree, or
@@ -1325,13 +1328,16 @@ static CGFloat const kPaneWidth = 190;
 	if(!uuids)
 		return [self validatedDropResult:NSDragOperationNone reason:"payload" row:row operation:operation];
 
-	oak::uuid_t menu;
+	oak::uuid_t menu, paneMenu;
 	size_t index = 0;
 	if(pane == lastPane)
 	{
 		menu = [self menuContextForPane:pane];
 		if(!menu)
 			return [self validatedDropResult:NSDragOperationNone reason:"menu-context" row:row operation:operation];
+		// The pane’s own menu: removals shift the landing slot (see below).
+		// A drop onto a submenu row retargets menu below and keeps append.
+		paneMenu = menu;
 		if(operation == NSTableViewDropOn)
 		{
 			// Onto a submenu row moves into it; onto a plain row behaves as
@@ -1396,11 +1402,20 @@ static CGFloat const kPaneWidth = 190;
 	if(!sameBundle)
 		return [self validatedDropResult:NSDragOperationNone reason:"same-bundle" row:row operation:operation];
 
-	// Dropping a single item onto its own slot is a no-op, not a move.
-	if([uuids count] == 1 && pane == lastPane && operation != NSTableViewDropOn)
+	// Dropping a single item where it already is — its own slot, or the gap
+	// directly below it (which collapses onto its slot once the dragged row
+	// vacates, exactly as acceptDrop adjusts it) — is a no-op, not a move.
+	// Without the adjustment the gap below offers a move that animates and
+	// lands exactly home: a silent jump-back. Only for reorder slots in the
+	// pane’s own menu: appending into a submenu row keeps its own math.
+	if([uuids count] == 1 && pane == lastPane && menu == paneMenu)
 	{
 		bundles::item_ptr item = bundles::lookup(to_s((NSString*)uuids[0]));
-		if(item && item->parent_menu() == menu && index == [self rowForItemUUID:item->uuid() inPane:pane])
+		size_t home = item ? [self rowForItemUUID:item->uuid() inPane:pane] : SIZE_MAX;
+		size_t landing = index;
+		if(item && item->parent_menu() == menu && home < landing)
+			landing -= 1;
+		if(item && item->parent_menu() == menu && landing == home)
 			return [self validatedDropResult:NSDragOperationNone reason:"noop" row:row operation:operation];
 	}
 	return [self validatedDropResult:NSDragOperationMove reason:"ok" row:row operation:operation];
@@ -1411,10 +1426,14 @@ static CGFloat const kPaneWidth = 190;
 	NSInteger pane = [self columnIndexForTableView:tableView];
 	NSInteger lastPane = (NSInteger)[paneTables count] - 1;
 	if(pane == -1)
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: acceptDrop with no pane (panes rebuilt mid-drop?)");
 		return NO;
+	}
 
 	oak::uuid_t menu;
 	size_t at = 0;
+	oak::uuid_t paneMenu;
 	if(pane == lastPane)
 	{
 		menu = [self menuContextForPane:pane];
@@ -1423,6 +1442,7 @@ static CGFloat const kPaneWidth = 190;
 			os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop rejected, no menu owns pane %ld", (long)pane);
 			return NO;
 		}
+		paneMenu = menu;
 		if(operation == NSTableViewDropOn && row >= 0 && row < (NSInteger)paneEntries[pane].size())
 		{
 			if(bundles::item_ptr anchor = paneEntries[pane][row]->represented_item())
@@ -1451,7 +1471,10 @@ static CGFloat const kPaneWidth = 190;
 	else
 	{
 		if(row < 0 || row >= (NSInteger)paneEntries[pane].size())
+		{
+			os_log_error(OS_LOG_DEFAULT, "BundleEditor: acceptDrop row %ld outside pane", (long)row);
 			return NO;
+		}
 		be::entry_ptr target = paneEntries[pane][row];
 		if(bundles::item_ptr represented = target->represented_item())
 		{
@@ -1460,10 +1483,14 @@ static CGFloat const kPaneWidth = 190;
 			else if(target->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
 				menu = represented->uuid();
 			else
+			{
+				os_log_error(OS_LOG_DEFAULT, "BundleEditor: acceptDrop target is not a menu");
 				return NO;
+			}
 		}
 		else
 		{
+			os_log_error(OS_LOG_DEFAULT, "BundleEditor: acceptDrop target has no item");
 			return NO;
 		}
 		at = target->has_children() ? target->children().size() : 0;
@@ -1483,8 +1510,11 @@ static CGFloat const kPaneWidth = 190;
 		return NO;
 	}
 
-	// Adjust for dragged rows above the drop point within the same menu.
-	if(pane == lastPane && operation != NSTableViewDropOn)
+	// Adjust for dragged rows above the drop point within the same menu, so
+	// the item lands where the highlight pointed regardless of drag
+	// direction. This covers drops onto a plain row too (landing above it
+	// either way); only appending into a submenu row keeps its own slot.
+	if(pane == lastPane && menu == paneMenu)
 	{
 		size_t above = 0;
 		for(size_t i = 0; i < at && i < paneEntries[pane].size(); ++i)
@@ -1510,6 +1540,7 @@ static CGFloat const kPaneWidth = 190;
 	draggingActive = NO;
 	[self flushPendingRebuild];
 
+	os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop applied %lu item(s) at %lu", (unsigned long)[uuids count], (unsigned long)at);
 	if(bundles::item_ptr first = bundles::lookup(to_s((NSString*)uuids[0])))
 		[self revealBundleItem:first];
 	return YES;
@@ -1670,7 +1701,7 @@ static CGFloat const kPaneWidth = 190;
 	if(!plist::equal(infoPlist, bundle->plist()))
 		changes[bundle] = infoPlist;
 
-	bundles::add_to_menu_at_index(parentMenu, bundles::item_t::menu_item_separator()->uuid(), at);
+	bundles::add_to_menu_at_index(parentMenu, bundles::item_t::menu_item_separator()->uuid(), at, false);
 	[self selectRow:at inPane:pane];
 	[self didChangeModifiedState];
 }

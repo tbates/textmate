@@ -230,7 +230,7 @@ namespace bundles
 		notify_changed();
 	}
 
-	void add_to_menu_at_index (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, size_t index)
+	void add_to_menu_at_index (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, size_t index, bool dedup)
 	{
 		if(!menu_uuid || !item_uuid)
 			return;
@@ -238,7 +238,10 @@ namespace bundles
 		Callbacks(&callback_t::bundles_will_change);
 
 		std::vector<oak::uuid_t>& members = AllMenus[menu_uuid];
-		members.erase(std::remove(members.begin(), members.end(), item_uuid), members.end());
+		// Dividers share one uuid: de-duplicating a divider insert would
+		// delete every divider already in the menu.
+		if(dedup)
+			members.erase(std::remove(members.begin(), members.end(), item_uuid), members.end());
 		members.insert(members.begin() + std::min(index, members.size()), item_uuid);
 
 		if(item_ptr item = lookup(item_uuid))

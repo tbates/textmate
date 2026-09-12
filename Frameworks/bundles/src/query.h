@@ -44,8 +44,10 @@ namespace bundles
 	void add_to_menu (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, oak::uuid_t const& after_uuid = oak::uuid_t());
 
 	// Insert item_uuid at index in the menu (clamped to the end),
-	// de-duplicated, updating the item’s parent menu. In-memory index only.
-	void add_to_menu_at_index (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, size_t index);
+	// de-duplicated unless dedup is false, updating the item’s parent menu.
+	// Pass false for dividers: they share one uuid, so de-duplicating would
+	// delete every divider already in the menu. In-memory index only.
+	void add_to_menu_at_index (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, size_t index, bool dedup = true);
 
 	// Remove item_uuid from the menu, resetting the item’s parent menu to its
 	// bundle. In-memory index only; persist with remove_uuid_from_main_menu().
