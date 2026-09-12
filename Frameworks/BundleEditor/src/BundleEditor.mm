@@ -26,6 +26,12 @@
 
 @class OakCommand;
 
+// Miller keyboard navigation: a plain NSTableView swallows the right arrow,
+// so panes get a tiny subclass that offers it to the editor first.
+@interface BEPaneTableView : NSTableView
+@property (nonatomic, weak) BundleEditor* editor;
+@end
+
 @interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate, NSMenuDelegate>
 {
 	NSViewController*      _browserViewController;
@@ -49,6 +55,14 @@
 
 	BOOL propertiesChanged;
 
+	// A background bundle reload that lands mid-drag must not rebuild the
+	// panes: resetPanes replaces the table objects, orphaning the active
+	// drag source, so every later validateDrop fails and the drop slides
+	// back. While draggingActive, didChangeBundleItems only records that a
+	// rebuild is pending; the drop (or the session end) flushes it.
+	BOOL draggingActive;
+	BOOL rebuildPending;
+
 	bundles::item_ptr bundleItem;
 	OakDocument* bundleItemContent;
 }
@@ -56,8 +70,12 @@
 - (void)didChangeModifiedState;
 - (void)resetPanes;
 - (void)selectFirstRows;
-- (void)addInsertItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
+- (NSArray*)addInsertItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
 - (void)addContextItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
+- (BOOL)paneTableViewDidPressRightArrow:(NSTableView*)tableView;
+- (void)deleteDividerAtAnchor:(NSMenuItem*)sender;
+- (void)paneTableViewDraggingSessionDidEnd:(BEPaneTableView*)tableView;
+- (void)flushPendingRebuild;
 - (void)appendPaneWithEntries:(std::vector<be::entry_ptr> const&)entries;
 - (void)truncatePanesAfter:(NSInteger)pane;
 - (void)layoutPanes;
@@ -75,6 +93,25 @@
 @property (nonatomic) NSMutableDictionary* bundleItemProperties;
 - (bundles::item_ptr const&)bundleItem;
 - (void)setBundleItem:(bundles::item_ptr const&)aBundleItem;
+@end
+
+@implementation BEPaneTableView
+- (void)keyDown:(NSEvent*)event
+{
+	if(event.keyCode == 124 /* right arrow */ && (event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask) == 0)
+	{
+		if([self.editor paneTableViewDidPressRightArrow:self])
+			return;
+	}
+	[super keyDown:event];
+}
+
+// NSDraggingSource callback: the session ending (drop, drag-out, or cancel)
+// re-opens the rebuilds deferred while it was active.
+- (void)draggingSession:(NSDraggingSession*)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation
+{
+	[self.editor paneTableViewDraggingSessionDidEnd:self];
+}
 @end
 
 namespace
@@ -256,7 +293,8 @@ static CGFloat const kPaneWidth = 190;
 	scrollView.hasVerticalScroller = YES;
 	scrollView.autohidesScrollers = YES;
 
-	NSTableView* tableView = [[NSTableView alloc] initWithFrame:NSZeroRect];
+	BEPaneTableView* tableView = [[BEPaneTableView alloc] initWithFrame:NSZeroRect];
+	tableView.editor = self;
 	NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"Items"];
 	column.resizingMask = NSTableColumnAutoresizingMask;
 	column.width = kPaneWidth;
@@ -472,6 +510,14 @@ static CGFloat const kPaneWidth = 190;
 
 - (void)didChangeBundleItems
 {
+	// Deferred while a drag session is active (see draggingActive): rebuilding
+	// here would replace the drag source mid-hover and fail every later
+	// validation. The drop (or the session end) flushes the pending rebuild.
+	if(draggingActive)
+	{
+		rebuildPending = YES;
+		return;
+	}
 	NSMutableArray* savedPath = [NSMutableArray array];
 	for(NSInteger pane = 0; pane < (NSInteger)[paneTables count]; ++pane)
 	{
@@ -870,13 +916,14 @@ static CGFloat const kPaneWidth = 190;
 	return [self cellViewForEntry:paneEntries[pane][row] inTableView:tableView];
 }
 
-- (void)addInsertItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView
+- (NSArray*)addInsertItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView
 {
 	// “Below here” inserts into the anchor row’s own menu. Separators share
-	// one item, so the anchor travels as (pane, row), not uuid.
+	// one item, so the anchor travels as (pane, row), not uuid. Returns the
+	// anchor (shared with Delete Divider) or nil when there is no menu.
 	NSInteger anchorPane = [self columnIndexForTableView:tableView];
 	if(![self menuContextForPane:anchorPane])
-		return;
+		return nil;
 	NSInteger anchorRow = -1;
 	for(size_t i = 0; i < paneEntries[anchorPane].size(); ++i)
 	{
@@ -887,7 +934,7 @@ static CGFloat const kPaneWidth = 190;
 		}
 	}
 	if(anchorRow == -1)
-		return;
+		return nil;
 	[menu addItem:[NSMenuItem separatorItem]];
 	NSArray* anchor = @[ @(anchorPane), @(anchorRow) ];
 	NSMenuItem* submenuItem = [menu addItemWithTitle:@"Insert New Category Below Here" action:@selector(insertMenuBelowAnchor:) keyEquivalent:@""];
@@ -896,6 +943,7 @@ static CGFloat const kPaneWidth = 190;
 	NSMenuItem* dividerItem = [menu addItemWithTitle:@"Insert Divider Here" action:@selector(insertSeparatorBelowAnchor:) keyEquivalent:@""];
 	dividerItem.target = self;
 	dividerItem.representedObject = anchor;
+	return anchor;
 }
 
 - (NSView*)cellViewForEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView
@@ -964,6 +1012,19 @@ static CGFloat const kPaneWidth = 190;
 {
 	if(bundles::item_ptr item = entry->represented_item())
 	{
+		// Dividers share one item, so Copy UUID is meaningless for them;
+		// they get deletion plus the same below-here inserts as anything.
+		if(item == bundles::item_t::menu_item_separator())
+		{
+			if(NSArray* anchor = [self addInsertItemsToMenu:menu forEntry:entry inTableView:tableView])
+			{
+				NSMenuItem* deleteItem = [menu insertItemWithTitle:@"Delete Divider" action:@selector(deleteDividerAtAnchor:) keyEquivalent:@"" atIndex:0];
+				deleteItem.target = self;
+				deleteItem.representedObject = anchor;
+			}
+			return;
+		}
+
 		if(entry->identifier() == "Menu Actions")
 		{
 			[self addInsertItemsToMenu:menu forEntry:entry inTableView:tableView];
@@ -1168,9 +1229,30 @@ static CGFloat const kPaneWidth = 190;
 	}
 	if([uuids count] == 0)
 		return NO;
+	// A drag session is starting: background reloads must not rebuild the
+	// panes until it ends (see draggingActive).
+	draggingActive = YES;
 	[pboard declareTypes:@[ kBundleItemUUIDsPboardType ] owner:self];
 	[pboard setPropertyList:uuids forType:kBundleItemUUIDsPboardType];
 	return YES;
+}
+
+// The drop landed (or the session ended any other way): re-open deferred
+// rebuilds and run one if a reload arrived mid-drag.
+- (void)flushPendingRebuild
+{
+	if(rebuildPending)
+	{
+		rebuildPending = NO;
+		[self didChangeBundleItems];
+	}
+}
+
+- (void)paneTableViewDraggingSessionDidEnd:(BEPaneTableView*)tableView
+{
+	(void)tableView;
+	draggingActive = NO;
+	[self flushPendingRebuild];
 }
 
 // Drops land in two places: between last-pane rows (reorder within that
@@ -1379,6 +1461,11 @@ static CGFloat const kPaneWidth = 190;
 		return NO;
 	}
 
+	// The move’s notification was deferred (see draggingActive): rebuild now
+	// so the panes show the drop before revealing it.
+	draggingActive = NO;
+	[self flushPendingRebuild];
+
 	if(bundles::item_ptr first = bundles::lookup(to_s((NSString*)uuids[0])))
 		[self revealBundleItem:first];
 	return YES;
@@ -1544,6 +1631,49 @@ static CGFloat const kPaneWidth = 190;
 	[self didChangeModifiedState];
 }
 
+// Delete the divider at the anchor row. Dividers share one item, so this is
+// positional on both sides: the plist helper takes out exactly the token at
+// the anchor slot (a value erase would delete every divider in the menu),
+// and so does the in-memory helper. Anything else in that slot refuses.
+- (void)deleteDividerAtAnchor:(NSMenuItem*)sender
+{
+	oak::uuid_t parentMenu;
+	bundles::item_ptr bundle;
+	size_t at = 0;
+	NSInteger pane = -1;
+	if(![self insertionTargetForAnchor:[sender representedObject] parentMenu:&parentMenu bundle:&bundle atIndex:&at pane:&pane])
+		return;
+	// insertionTargetForAnchor reports the slot below the anchor row.
+	if(at == 0 || at - 1 >= paneEntries[pane].size())
+		return;
+	size_t const index = at - 1;
+	if(paneEntries[pane][index]->represented_item() != bundles::item_t::menu_item_separator())
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: delete divider refused, row %lu is not a divider", (unsigned long)index);
+		return;
+	}
+
+	std::string const bundleStr = to_s(bundle->uuid()), menuStr = to_s(parentMenu);
+
+	auto base = changes.find(bundle);
+	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
+	if(!bundles::remove_separator_from_main_menu_at_index(infoPlist, bundleStr, menuStr, index))
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: delete divider failed for menu %{public}s", menuStr.c_str());
+		return;
+	}
+	if(!plist::equal(infoPlist, bundle->plist()))
+		changes[bundle] = infoPlist;
+
+	bundles::remove_separator_from_menu_at_index(parentMenu, index);
+
+	// The removal notification rebuilt the panes synchronously: hold position.
+	NSTableView* tableView = paneTables[pane];
+	if(NSInteger rows = [tableView numberOfRows])
+		[tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:MIN((NSInteger)index, rows - 1)] byExtendingSelection:NO];
+	[self didChangeModifiedState];
+}
+
 - (void)showInFinder:(id)sender
 {
 	if(![sender respondsToSelector:@selector(representedObject)])
@@ -1555,6 +1685,21 @@ static CGFloat const kPaneWidth = 190;
 // ===================
 // = Column selection =
 // ===================
+
+// Right arrow in a Miller pane moves focus into the child pane, selecting
+// its first row when nothing is selected there (which cascades deeper). NO
+// when there is no child pane, so the key falls through to the table.
+- (BOOL)paneTableViewDidPressRightArrow:(NSTableView*)tableView
+{
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	if(pane == -1 || pane + 1 >= (NSInteger)[paneTables count])
+		return NO;
+	NSTableView* nextPane = paneTables[pane + 1];
+	[self.window makeFirstResponder:nextPane];
+	if([nextPane selectedRow] == -1 && [nextPane numberOfRows] != 0)
+		[nextPane selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+	return YES;
+}
 
 - (void)tableViewSelectionDidChange:(NSNotification*)notification
 {

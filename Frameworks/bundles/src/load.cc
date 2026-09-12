@@ -149,6 +149,23 @@ bool bundles::insert_separator_into_main_menu_at_index (plist::dictionary_t& inf
 	return true;
 }
 
+bool bundles::remove_separator_from_main_menu_at_index (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, size_t index)
+{
+	if(!oak::uuid_t::is_valid(menu_uuid))
+		return false;
+
+	plist::array_t* items = main_menu_items(info_plist, bundle_uuid, menu_uuid, false);
+	if(!items || index >= items->size())
+		return false;
+
+	std::string const* str = plist::get<std::string>(&(*items)[index]);
+	if(!str || *str != kSeparatorString)
+		return false;
+
+	items->erase(items->begin() + index);
+	return true;
+}
+
 bool bundles::add_submenu_to_main_menu (plist::dictionary_t& info_plist, std::string const& submenu_uuid, std::string const& name)
 {
 	if(!oak::uuid_t::is_valid(submenu_uuid))

@@ -268,6 +268,23 @@ namespace bundles
 		notify_changed();
 	}
 
+	void remove_separator_from_menu_at_index (oak::uuid_t const& menu_uuid, size_t index)
+	{
+		if(!menu_uuid)
+			return;
+
+		Callbacks(&callback_t::bundles_will_change);
+
+		// The shared divider item has no meaningful parent menu to reset, and
+		// value-based removal would take out every divider in the menu, so
+		// only the exact slot goes, and only when it really is a divider.
+		if(auto menu = AllMenus.find(menu_uuid); menu != AllMenus.end() && index < menu->second.size() && menu->second[index] == item_t::menu_item_separator()->uuid())
+			menu->second.erase(menu->second.begin() + index);
+
+		cache().clear();
+		notify_changed();
+	}
+
 	void remove_item (item_ptr item)
 	{
 		iterate(it, AllItems)

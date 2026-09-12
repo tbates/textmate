@@ -36,6 +36,13 @@ bool insert_separator_into_main_menu_at_index (plist::dictionary_t& info_plist, 
 // and have their name refreshed. Returns false without touching info_plist
 // when submenu_uuid is invalid.
 bool add_submenu_to_main_menu (plist::dictionary_t& info_plist, std::string const& submenu_uuid, std::string const& name);
+
+// Remove the divider token at index in the addressed menu’s items array.
+// Unlike the uuid removers this is positional (dividers share one token, so
+// a value-based erase would take out every divider in the menu). Returns
+// false without touching info_plist when the menu is missing, the index is
+// out of bounds, or the entry there is not a divider.
+bool remove_separator_from_main_menu_at_index (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, size_t index);
 }
 
 #endif /* end of include guard: LOAD_H_C8BVI372 */
