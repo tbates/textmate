@@ -272,7 +272,8 @@ static CGFloat const kPaneWidth = 190;
 	columnsView.frame = frame;
 	for(NSTableView* tableView in paneTables)
 		tableView.allowsMultipleSelection = (tableView == [paneTables lastObject]);
-	[columnsScrollView scrollToEndOfDocument:nil];
+	if(NSTableView* lastPane = [paneTables lastObject])
+		[columnsView scrollRectToVisible:lastPane.enclosingScrollView.frame];
 }
 
 - (void)resetPanes

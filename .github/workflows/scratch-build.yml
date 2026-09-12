@@ -20,9 +20,12 @@ jobs:
           submodules: recursive
 
       - name: Install build dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install multimarkdown ninja mercurial subversion
-          command -v cmake >/dev/null || brew install cmake
+          for pkg in multimarkdown ninja mercurial subversion cmake; do
+            brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
+          done
 
       - name: Configure
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
