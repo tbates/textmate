@@ -26,7 +26,7 @@
 
 @class OakCommand;
 
-@interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate>
+@interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate, NSMenuDelegate>
 {
 	NSViewController*      _browserViewController;
 	NSViewController*      _documentViewController;
@@ -57,6 +57,7 @@
 - (void)resetPanes;
 - (void)selectFirstRows;
 - (void)addInsertItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
+- (void)addContextItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
 - (void)appendPaneWithEntries:(std::vector<be::entry_ptr> const&)entries;
 - (void)truncatePanesAfter:(NSInteger)pane;
 - (void)layoutPanes;
@@ -267,6 +268,12 @@ static CGFloat const kPaneWidth = 190;
 	tableView.allowsEmptySelection = YES;
 	[tableView registerForDraggedTypes:@[ kBundleItemUUIDsPboardType ]];
 	[tableView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
+
+	// Table-level right-click menu, filled from the clicked row in
+	// menuWillOpen: (per-cell menus alone do not reliably appear).
+	NSMenu* contextMenu = [NSMenu new];
+	contextMenu.delegate = self;
+	tableView.menu = contextMenu;
 
 	scrollView.documentView = tableView;
 	[columnsView addArrangedSubview:scrollView];
@@ -924,7 +931,6 @@ static CGFloat const kPaneWidth = 190;
 	};
 	cell.textField.attributedStringValue = [[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:entry->name()] attributes:attrs];
 
-	NSMenu* menu = [NSMenu new];
 	if(bundles::item_ptr item = entry->represented_item())
 	{
 		NSString* imageName = entry->identifier() == "Menu Actions" ? @"MenuItem" : info_for(item->kind()).file;
@@ -934,12 +940,34 @@ static CGFloat const kPaneWidth = 190;
 			[srcImage drawInRect:NSMakeRect(NSMinX(dstRect)+2, NSMinY(dstRect), NSWidth(dstRect)-2, NSHeight(dstRect)) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1];
 			return YES;
 		}];
+	}
+	else
+	{
+		std::string const& path = entry->represented_path();
+		if(path != NULL_STR)
+			cell.imageView.image = [TMFileReference imageForURL:[NSURL fileURLWithPath:[NSFileManager.defaultManager stringWithFileSystemRepresentation:path.data() length:path.size()]] size:NSMakeSize(16, 16)];
+	}
 
+	// The pane also owns an identical table-level menu (see menuWillOpen:):
+	// per-cell menus depend on hit-testing reaching the cell view, which
+	// right-clicks do not reliably do on every row.
+	NSMenu* menu = [NSMenu new];
+	[self addContextItemsToMenu:menu forEntry:entry inTableView:tableView];
+	cell.menu = menu;
+	return cell;
+}
+
+// Right-click content for one entry, shared by the cell menu and the
+// table-level menu. Group rows (no item, no path) intentionally get an empty
+// menu — there is nothing to export, reveal, or insert below.
+- (void)addContextItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView
+{
+	if(bundles::item_ptr item = entry->represented_item())
+	{
 		if(entry->identifier() == "Menu Actions")
 		{
 			[self addInsertItemsToMenu:menu forEntry:entry inTableView:tableView];
-			cell.menu = menu;
-			return cell;
+			return;
 		}
 
 		if(item->kind() == bundles::kItemTypeBundle)
@@ -977,13 +1005,32 @@ static CGFloat const kPaneWidth = 190;
 	{
 		std::string const& path = entry->represented_path();
 		if(path != NULL_STR)
-		{
-			cell.imageView.image = [TMFileReference imageForURL:[NSURL fileURLWithPath:[NSFileManager.defaultManager stringWithFileSystemRepresentation:path.data() length:path.size()]] size:NSMakeSize(16, 16)];
 			[menu addItem:[self createMenuItemForCxxPath:path]];
+	}
+}
+
+// Table-level right-click menu: rebuilt from the clicked row on every open,
+// so the anchor always matches the row under the cursor even when the
+// right-click also moved the selection (which rebuilds the panes).
+- (void)menuWillOpen:(NSMenu*)menu
+{
+	NSTableView* tableView = nil;
+	for(NSTableView* paneTableView in paneTables)
+	{
+		if(paneTableView.menu == menu)
+		{
+			tableView = paneTableView;
+			break;
 		}
 	}
-	cell.menu = menu;
-	return cell;
+	if(!tableView)
+		return;
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	NSInteger row = [tableView clickedRow];
+	if(pane == -1 || row < 0 || row >= (NSInteger)paneEntries[pane].size())
+		return;
+	[menu removeAllItems];
+	[self addContextItemsToMenu:menu forEntry:paneEntries[pane][row] inTableView:tableView];
 }
 
 // Apply a validated drop: plist edits first (per item, so memory and disk
