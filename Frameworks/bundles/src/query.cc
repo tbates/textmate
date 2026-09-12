@@ -15,6 +15,31 @@ namespace bundles
 	void add_callback (callback_t* cb)    { Callbacks.add(cb); }
 	void remove_callback (callback_t* cb) { Callbacks.remove(cb); }
 
+	static size_t notification_depth = 0;
+	static bool notifications_dirty = false;
+
+	static void notify_changed ()
+	{
+		if(notification_depth)
+			notifications_dirty = true;
+		else
+			notify_changed();
+	}
+
+	void suspend_notifications ()
+	{
+		++notification_depth;
+	}
+
+	void resume_notifications ()
+	{
+		if(notification_depth && --notification_depth == 0 && notifications_dirty)
+		{
+			notifications_dirty = false;
+			notify_changed();
+		}
+	}
+
 	static bool is_deleted (item_ptr item)
 	{
 		return item->deleted() || item->bundle() && item->bundle()->deleted();
@@ -170,7 +195,7 @@ namespace bundles
 			}
 		}
 
-		Callbacks(&callback_t::bundles_did_change);
+		notify_changed();
 
 		bool res = true;
 		for(auto const& item : AllItems)
@@ -183,7 +208,7 @@ namespace bundles
 		Callbacks(&callback_t::bundles_will_change);
 		AllItems.push_back(item);
 		cache().clear();
-		Callbacks(&callback_t::bundles_did_change);
+		notify_changed();
 	}
 
 	void add_to_menu (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, oak::uuid_t const& after_uuid)
@@ -202,7 +227,7 @@ namespace bundles
 			item->set_parent_menu(menu_uuid);
 
 		cache().clear();
-		Callbacks(&callback_t::bundles_did_change);
+		notify_changed();
 	}
 
 	void add_to_menu_at_index (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid, size_t index)
@@ -220,7 +245,7 @@ namespace bundles
 			item->set_parent_menu(menu_uuid);
 
 		cache().clear();
-		Callbacks(&callback_t::bundles_did_change);
+		notify_changed();
 	}
 
 	void remove_from_menu (oak::uuid_t const& menu_uuid, oak::uuid_t const& item_uuid)
@@ -240,7 +265,7 @@ namespace bundles
 		}
 
 		cache().clear();
-		Callbacks(&callback_t::bundles_did_change);
+		notify_changed();
 	}
 
 	void remove_item (item_ptr item)
@@ -253,7 +278,7 @@ namespace bundles
 			Callbacks(&callback_t::bundles_will_change);
 			AllItems.erase(it);
 			cache().clear();
-			Callbacks(&callback_t::bundles_did_change);
+			notify_changed();
 			break;
 		}
 	}

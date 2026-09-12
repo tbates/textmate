@@ -374,3 +374,90 @@ void test_move_uuid_within_main_menu ()
 		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").size(), 1);
 	}
 }
+
+void test_submenu_and_separator_main_menu ()
+{
+	std::string const NewMenuUUID = "A1B2C3D4-2981-402D-B039-A63949FBDA12";
+
+	// A fresh submenu gets a record with a name and an empty items array …
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::add_submenu_to_main_menu(info, NewMenuUUID, "New Category"));
+		auto items = items_at(info, "mainMenu.submenus." + NewMenuUUID + ".items");
+		OAK_ASSERT_EQ(items.size(), 0);
+
+		// … which then addresses like any loaded submenu.
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu_at_index(info, BundleUUID, NewMenuUUID, FirstUUID, 0));
+		items = items_at(info, "mainMenu.submenus." + NewMenuUUID + ".items");
+		OAK_ASSERT_EQ(items.size(), 1);
+		OAK_ASSERT_EQ(items[0], FirstUUID);
+
+		// Re-adding refreshes the name but keeps the items.
+		OAK_ASSERT(bundles::add_submenu_to_main_menu(info, NewMenuUUID, "Renamed"));
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.submenus." + NewMenuUUID + ".items").size(), 1);
+
+		OAK_ASSERT(!bundles::add_submenu_to_main_menu(info, "not-a-uuid", "Bogus"));
+	}
+
+	// Dividers insert (and de-duplicate) as the divider token, clamped.
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, BundleUUID, 1));
+		auto items = items_at(info, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 3);
+		OAK_ASSERT_EQ(items[1], "------------------------------------");
+
+		OAK_ASSERT(bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, BundleUUID, 99));
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").size(), 3);
+
+		OAK_ASSERT(bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, MenuUUID, 0));
+		items = items_at(info, "mainMenu.submenus." + MenuUUID + ".items");
+		OAK_ASSERT_EQ(items.size(), 2);
+		OAK_ASSERT_EQ(items[0], "------------------------------------");
+
+		OAK_ASSERT(!bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, "not-a-uuid", 0));
+		OAK_ASSERT(!bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, ThirdUUID, 0));
+	}
+}
+
+void test_notification_batch ()
+{
+	struct counting_callback_t : bundles::callback_t
+	{
+		int count = 0;
+		void bundles_did_change () { ++count; }
+	};
+
+	counting_callback_t counter;
+	bundles::add_callback(&counter);
+
+	// Throwaway uuids: unknown to the index, so the mutations below only
+	// exercise notification flow, never fixture items.
+	oak::uuid_t const menu = oak::uuid_t().generate();
+	oak::uuid_t const item = oak::uuid_t().generate();
+
+	{
+		bundles::notification_batch_t batch;
+		bundles::add_to_menu(menu, item);
+		bundles::add_to_menu_at_index(menu, item, 0);
+		bundles::remove_from_menu(menu, item);
+		OAK_ASSERT_EQ(counter.count, 0);
+
+		// Batches nest: the inner exit stays silent …
+		{
+			bundles::notification_batch_t inner;
+			bundles::add_to_menu(menu, item);
+			OAK_ASSERT_EQ(counter.count, 0);
+		}
+		OAK_ASSERT_EQ(counter.count, 0);
+	}
+	// … and the outermost exit fires exactly once.
+	OAK_ASSERT_EQ(counter.count, 1);
+
+	// Unbalanced resume is a no-op, never a phantom notification.
+	bundles::resume_notifications();
+	OAK_ASSERT_EQ(counter.count, 1);
+
+	bundles::remove_callback(&counter);
+	bundles::remove_from_menu(menu, item);
+}

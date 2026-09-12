@@ -226,7 +226,6 @@ static CGFloat const kPaneWidth = 190;
 		columnsView = [[NSSplitView alloc] initWithFrame:NSZeroRect];
 		columnsView.vertical = YES;
 		columnsView.dividerStyle = NSSplitViewDividerStyleThin;
-		columnsView.autosaveName = @"Bundle Editor Columns";
 		columnsView.autoresizingMask = NSViewHeightSizable;
 
 		columnsScrollView.documentView = columnsView;
@@ -234,6 +233,17 @@ static CGFloat const kPaneWidth = 190;
 
 		paneTables = [NSMutableArray array];
 		[self resetPanes];
+
+		// Draw the first columns up front: selecting the first bundle shows
+		// its components, and selecting the first component shows its items,
+		// so the editor opens on bundles | components | items.
+		// No autosaveName on columnsView: panes are transient (rebuilt on
+		// every change), and restored divider positions squeeze new panes.
+		for(NSInteger pane = 0; pane < 2 && pane < (NSInteger)[paneTables count]; ++pane)
+		{
+			if([(NSTableView*)paneTables[pane] numberOfRows] != 0)
+				[(NSTableView*)paneTables[pane] selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+		}
 	}
 	return _browserViewController;
 }
@@ -250,6 +260,8 @@ static CGFloat const kPaneWidth = 190;
 	NSTableView* tableView = [[NSTableView alloc] initWithFrame:NSZeroRect];
 	NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"Items"];
 	column.resizingMask = NSTableColumnAutoresizingMask;
+	column.width = kPaneWidth;
+	column.minWidth = 100;
 	[tableView addTableColumn:column];
 	tableView.headerView = nil;
 	tableView.delegate = self;
@@ -599,8 +611,11 @@ static CGFloat const kPaneWidth = 190;
 			plist[bundles::kFieldName] = std::string("untitled");
 		item->set_plist(plist);
 		changes.emplace(item, plist);
-		bundles::add_item(item);
-		[self placeNewBundleItem:item ofType:aType inBundle:bundle];
+		{
+			bundles::notification_batch_t batch;
+			bundles::add_item(item);
+			[self placeNewBundleItem:item ofType:aType inBundle:bundle];
+		}
 		[self revealBundleItem:item];
 		[self didChangeModifiedState];
 	}
@@ -913,6 +928,33 @@ static CGFloat const kPaneWidth = 190;
 		NSMenuItem* menuItem = [menu addItemWithTitle:@"Copy UUID" action:@selector(copyUUID:) keyEquivalent:@""];
 		menuItem.target = self;
 		menuItem.representedObject = [NSString stringWithCxxString:item->uuid()];
+
+		// “Below here” inserts into the anchor row’s own menu. Separators
+		// share one item, so the anchor travels as (pane, row), not uuid.
+		NSInteger anchorPane = [self columnIndexForTableView:tableView];
+		if([self menuContextForPane:anchorPane])
+		{
+			NSInteger anchorRow = -1;
+			for(size_t i = 0; i < paneEntries[anchorPane].size(); ++i)
+			{
+				if(paneEntries[anchorPane][i] == entry)
+				{
+					anchorRow = i;
+					break;
+				}
+			}
+			if(anchorRow != -1)
+			{
+				[menu addItem:[NSMenuItem separatorItem]];
+				NSArray* anchor = @[ @(anchorPane), @(anchorRow) ];
+				NSMenuItem* submenuItem = [menu addItemWithTitle:@"Insert New Category Below Here" action:@selector(insertMenuBelowAnchor:) keyEquivalent:@""];
+				submenuItem.target = self;
+				submenuItem.representedObject = anchor;
+				NSMenuItem* dividerItem = [menu addItemWithTitle:@"Insert Divider Here" action:@selector(insertSeparatorBelowAnchor:) keyEquivalent:@""];
+				dividerItem.target = self;
+				dividerItem.representedObject = anchor;
+			}
+		}
 	}
 	else
 	{
@@ -949,17 +991,22 @@ static CGFloat const kPaneWidth = 190;
 	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
 
 	size_t at = index;
-	for(auto const& move : moves)
 	{
-		// Removal is best-effort: items never explicitly listed (fresh
-		// leftovers) or a missing top-level array have no entry to remove.
-		// Insertion gates the move — it fails only for unknown menus.
-		std::string const itemStr = to_s(move.first), oldStr = to_s(move.second), newStr = to_s(targetMenu);
-		bundles::remove_uuid_from_main_menu(infoPlist, to_s(bundle->uuid()), oldStr, itemStr);
-		if(!bundles::insert_uuid_into_main_menu_at_index(infoPlist, to_s(bundle->uuid()), newStr, itemStr, at++))
-			return NO;
-		bundles::remove_from_menu(move.second, move.first);
-		bundles::add_to_menu_at_index(targetMenu, move.first, at - 1);
+		// One notification for the whole drop: per-item dispatches would
+		// rebuild the panes on half-moved state between detach and insert.
+		bundles::notification_batch_t batch;
+		for(auto const& move : moves)
+		{
+			// Removal is best-effort: items never explicitly listed (fresh
+			// leftovers) or a missing top-level array have no entry to remove.
+			// Insertion gates the move — it fails only for unknown menus.
+			std::string const itemStr = to_s(move.first), oldStr = to_s(move.second), newStr = to_s(targetMenu);
+			bundles::remove_uuid_from_main_menu(infoPlist, to_s(bundle->uuid()), oldStr, itemStr);
+			if(!bundles::insert_uuid_into_main_menu_at_index(infoPlist, to_s(bundle->uuid()), newStr, itemStr, at++))
+				return NO;
+			bundles::remove_from_menu(move.second, move.first);
+			bundles::add_to_menu_at_index(targetMenu, move.first, at - 1);
+		}
 	}
 
 	if(!plist::equal(infoPlist, bundle->plist()))
@@ -1302,6 +1349,109 @@ static CGFloat const kPaneWidth = 190;
 			}
 		}];
 	}
+}
+
+- (BOOL)insertionTargetForAnchor:(NSArray*)anchor parentMenu:(oak::uuid_t*)parentMenu bundle:(bundles::item_ptr*)bundle atIndex:(size_t*)at pane:(NSInteger*)pane
+{
+	if(![anchor isKindOfClass:[NSArray class]] || [anchor count] != 2)
+		return NO;
+	NSInteger p = [anchor[0] integerValue], row = [anchor[1] integerValue];
+	if(p < 1 || p >= (NSInteger)[paneTables count] || row < 0 || row >= (NSInteger)paneEntries[p].size())
+		return NO;
+	oak::uuid_t menu = [self menuContextForPane:p];
+	if(!menu)
+		return NO;
+	be::entry_ptr shownBundle = [self selectedEntryInPane:0];
+	bundles::item_ptr b = shownBundle ? shownBundle->represented_item() : bundles::item_ptr();
+	if(!b)
+		return NO;
+	BOOL sameBundle = (menu == b->uuid());
+	if(!sameBundle)
+	{
+		if(bundles::item_ptr menuItem = bundles::lookup(menu))
+			sameBundle = menuItem->kind() == bundles::kItemTypeMenu && menuItem->bundle() == b;
+	}
+	if(!sameBundle)
+		return NO;
+	if(parentMenu)
+		*parentMenu = menu;
+	if(bundle)
+		*bundle = b;
+	if(at)
+		*at = row + 1;
+	if(pane)
+		*pane = p;
+	return YES;
+}
+
+- (void)selectRow:(size_t)row inPane:(NSInteger)pane
+{
+	if(pane < 0 || pane >= (NSInteger)[paneTables count])
+		return;
+	NSTableView* tableView = paneTables[pane];
+	if(row < (size_t)[tableView numberOfRows])
+		[tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+}
+
+- (void)insertMenuBelowAnchor:(NSMenuItem*)sender
+{
+	oak::uuid_t parentMenu;
+	bundles::item_ptr bundle;
+	size_t at = 0;
+	NSInteger pane = -1;
+	if(![self insertionTargetForAnchor:[sender representedObject] parentMenu:&parentMenu bundle:&bundle atIndex:&at pane:&pane])
+		return;
+
+	std::string const bundleStr = to_s(bundle->uuid()), menuStr = to_s(parentMenu);
+
+	oak::uuid_t submenuUUID = oak::uuid_t().generate();
+	std::string const submenuStr = to_s(submenuUUID);
+
+	auto base = changes.find(bundle);
+	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
+	if(!bundles::add_submenu_to_main_menu(infoPlist, submenuStr, "untitled submenu"))
+		return;
+	if(!bundles::insert_uuid_into_main_menu_at_index(infoPlist, bundleStr, menuStr, submenuStr, at))
+		return;
+	if(!plist::equal(infoPlist, bundle->plist()))
+		changes[bundle] = infoPlist;
+
+	// The submenu item itself has no file; its record lives in the bundle’s
+	// info.plist above, so it stays out of the changes map.
+	bundles::item_ptr submenu = std::make_shared<bundles::item_t>(submenuUUID, bundle, bundles::kItemTypeMenu);
+	submenu->set_name("untitled submenu");
+	{
+		bundles::notification_batch_t batch;
+		bundles::add_item(submenu);
+		bundles::add_to_menu_at_index(parentMenu, submenuUUID, at);
+	}
+
+	// The batch’s notification rebuilt the panes synchronously: select row.
+	[self selectRow:at inPane:pane];
+	[self didChangeModifiedState];
+}
+
+- (void)insertSeparatorBelowAnchor:(NSMenuItem*)sender
+{
+	oak::uuid_t parentMenu;
+	bundles::item_ptr bundle;
+	size_t at = 0;
+	NSInteger pane = -1;
+	if(![self insertionTargetForAnchor:[sender representedObject] parentMenu:&parentMenu bundle:&bundle atIndex:&at pane:&pane])
+		return;
+
+	std::string const bundleStr = to_s(bundle->uuid()), menuStr = to_s(parentMenu);
+
+	auto base = changes.find(bundle);
+	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
+	if(!bundles::insert_separator_into_main_menu_at_index(infoPlist, bundleStr, menuStr, at))
+		return;
+	if(!plist::equal(infoPlist, bundle->plist()))
+		changes[bundle] = infoPlist;
+
+	bundles::add_to_menu_at_index(parentMenu, bundles::item_t::menu_item_separator()->uuid(), at);
+	[self selectRow:at inPane:pane];
+	[self didChangeModifiedState];
 }
 
 - (void)showInFinder:(id)sender

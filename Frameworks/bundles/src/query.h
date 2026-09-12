@@ -20,6 +20,21 @@ namespace bundles
 	void add_item (item_ptr item);
 	void remove_item (item_ptr item);
 
+	// Coalesce change notifications: while suspended, bundles_did_change is
+	// swallowed and a single notification fires when the outermost
+	// resume_notifications() runs. Lets multi-step mutations (a drag move,
+	// a submenu insert) present one consistent state instead of N
+	// half-mutated ones. suspend/resume nest; resume without suspend is a
+	// no-op.
+	void suspend_notifications ();
+	void resume_notifications ();
+
+	struct notification_batch_t
+	{
+		notification_batch_t ()  { suspend_notifications(); }
+		~notification_batch_t () { resume_notifications(); }
+	};
+
 	// Record item_uuid as a member of the menu identified by menu_uuid
 	// (the bundle uuid addresses the top-level menu), placed directly after
 	// after_uuid, or appended when after_uuid is nil or absent. The entry is

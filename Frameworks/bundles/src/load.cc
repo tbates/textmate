@@ -114,6 +114,62 @@ bool bundles::remove_uuid_from_main_menu (plist::dictionary_t& info_plist, std::
 	return true;
 }
 
+bool bundles::insert_separator_into_main_menu_at_index (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, size_t index)
+{
+	if(!oak::uuid_t::is_valid(menu_uuid))
+		return false;
+
+	plist::array_t* items = main_menu_items(info_plist, bundle_uuid, menu_uuid, true);
+	if(!items)
+		return false;
+
+	erase_uuid_from_array(*items, kSeparatorString);
+	items->insert(items->begin() + std::min(index, items->size()), plist::any_t(kSeparatorString));
+	return true;
+}
+
+bool bundles::add_submenu_to_main_menu (plist::dictionary_t& info_plist, std::string const& submenu_uuid, std::string const& name)
+{
+	if(!oak::uuid_t::is_valid(submenu_uuid))
+		return false;
+
+	auto main_menu_it = info_plist.find("mainMenu");
+	plist::dictionary_t* main_menu = main_menu_it != info_plist.end() ? plist::get<plist::dictionary_t>(&main_menu_it->second) : nullptr;
+	if(!main_menu)
+	{
+		main_menu_it = info_plist.emplace("mainMenu", plist::dictionary_t()).first;
+		main_menu = plist::get<plist::dictionary_t>(&main_menu_it->second);
+		if(!main_menu)
+			return false;
+	}
+
+	auto sub_menus_it = main_menu->find("submenus");
+	plist::dictionary_t* sub_menus = sub_menus_it != main_menu->end() ? plist::get<plist::dictionary_t>(&sub_menus_it->second) : nullptr;
+	if(!sub_menus)
+	{
+		sub_menus_it = main_menu->emplace("submenus", plist::dictionary_t()).first;
+		sub_menus = plist::get<plist::dictionary_t>(&sub_menus_it->second);
+		if(!sub_menus)
+			return false;
+	}
+
+	auto sub_menu_it = sub_menus->find(submenu_uuid);
+	plist::dictionary_t* sub_menu = sub_menu_it != sub_menus->end() ? plist::get<plist::dictionary_t>(&sub_menu_it->second) : nullptr;
+	if(!sub_menu)
+	{
+		sub_menu_it = sub_menus->emplace(submenu_uuid, plist::dictionary_t()).first;
+		sub_menu = plist::get<plist::dictionary_t>(&sub_menu_it->second);
+		if(!sub_menu)
+			return false;
+		sub_menu->emplace("items", plist::array_t());
+	}
+
+	(*sub_menu)["name"] = name;
+	if(sub_menu->find("items") == sub_menu->end())
+		sub_menu->emplace("items", plist::array_t());
+	return true;
+}
+
 static void remove_cycles (oak::uuid_t const& menuUUID, std::map< oak::uuid_t, std::vector<oak::uuid_t> >& menus, std::set<oak::uuid_t> parents = { })
 {
 	auto pair = menus.find(menuUUID);
