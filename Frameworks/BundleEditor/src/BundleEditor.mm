@@ -25,7 +25,6 @@
 #import <oak/debug.h>
 
 @class OakCommand;
-@class BEOutlineEntry;
 
 @interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate>
 {
@@ -39,9 +38,10 @@
 	CGFloat _maxLabelWidth;
 	CGFloat _minPropertiesViewWidth;
 
-	NSOutlineView* outlineView;
-	NSMutableDictionary* entryCache; // identifier-path → BEOutlineEntry, one generation per reloadData
-	NSMutableSet* expandedPaths;
+	NSSplitView* columnsView;
+	NSScrollView* columnsScrollView;
+	NSMutableArray* paneTables; // NSTableView per Miller pane
+	std::vector<std::vector<be::entry_ptr>> paneEntries;
 	OakDocumentView* documentView;
 
 	be::entry_ptr bundles;
@@ -54,11 +54,19 @@
 }
 - (void)didChangeBundleItems;
 - (void)didChangeModifiedState;
-- (BEOutlineEntry*)wrapperForPath:(NSString*)path create:(BOOL)create;
-- (void)expandAncestorsOfPath:(NSString*)path;
-- (NSInteger)rowForPath:(NSString*)path;
-- (void)outlineSelectionDidChange:(NSNotification*)notification;
+- (void)resetPanes;
+- (void)appendPaneWithEntries:(std::vector<be::entry_ptr> const&)entries;
+- (void)truncatePanesAfter:(NSInteger)pane;
+- (void)layoutPanes;
+- (NSInteger)columnIndexForTableView:(NSTableView*)tableView;
+- (void)selectIdentifierPath:(NSArray*)path scroll:(BOOL)scroll;
+- (be::entry_ptr)selectedEntryInPane:(NSInteger)pane;
+- (oak::uuid_t)menuContextForPane:(NSInteger)pane;
+- (size_t)rowForItemUUID:(oak::uuid_t const&)uuid inPane:(NSInteger)pane;
+- (void)updateEditedItemFromSelection;
+- (NSArray*)identifierPathForItem:(bundles::item_ptr const&)anItem;
 - (BOOL)moveBundleItems:(NSArray*)uuidStrings toMenu:(oak::uuid_t const&)targetMenu atIndex:(size_t)index inBundle:(bundles::item_ptr const&)bundle;
+- (NSView*)cellViewForEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
 @property (nonatomic) PropertiesViewController* sharedPropertiesViewController;
 @property (nonatomic) PropertiesViewController* extraPropertiesViewController;
 @property (nonatomic) NSMutableDictionary* bundleItemProperties;
@@ -138,46 +146,6 @@ namespace
 	};
 }
 
-// NSOutlineView items must be Objective-C objects. The wrapper retains shared
-// ownership of its C++ browser entry; the entry cache is thrown away on every
-// reloadData, so wrappers never outlive their generation. Paths join entry
-// identifiers with \x1F from the invisible root, which keeps even same-named
-// submenus in different bundles distinct.
-@interface BEOutlineEntry : NSObject
-{
-@public
-	be::entry_ptr _entry;
-	NSString* _path;
-}
-- (instancetype)initWithEntry:(be::entry_ptr const&)anEntry path:(NSString*)aPath;
-@end
-
-@implementation BEOutlineEntry
-- (instancetype)initWithEntry:(be::entry_ptr const&)anEntry path:(NSString*)aPath
-{
-	if(self = [super init])
-	{
-		_entry = anEntry;
-		_path = aPath;
-	}
-	return self;
-}
-
-// Wrappers are re-created across data-source calls and generations; the
-// outline must treat any two wrappers for one identifier path as the node.
-- (BOOL)isEqual:(id)other
-{
-	return [other isKindOfClass:[BEOutlineEntry class]] && [((BEOutlineEntry*)other)->_path isEqualToString:_path];
-}
-
-- (NSUInteger)hash
-{
-	return [_path hash];
-}
-@end
-
-static NSString* const kPathSeparator = @"\x1F";
-
 // Private pasteboard type for intra-editor drags: an array of item UUID strings.
 static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUIDs";
 
@@ -234,15 +202,15 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 		self.windowSplitViewController.splitView.autosaveName = @"Bundle Editor Properties";
 
 		bundles = be::bundle_entries();
-		entryCache = [NSMutableDictionary dictionary];
-		expandedPaths = [NSMutableSet set];
-		[outlineView reloadData];
-		[outlineView expandItem:nil expandChildren:YES];
+		[self resetPanes];
 
-		[self.window makeFirstResponder:outlineView];
+		if([paneTables count] != 0)
+			[self.window makeFirstResponder:paneTables[0]];
 	}
 	return self;
 }
+
+static CGFloat const kPaneWidth = 190;
 
 - (NSViewController*)browserViewController
 {
@@ -250,86 +218,148 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 	{
 		_browserViewController = [[NSViewController alloc] initWithNibName:nil bundle:nil];
 
-		NSScrollView* scrollView = [[NSScrollView alloc] initWithFrame:NSZeroRect];
-		scrollView.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
-		scrollView.hasVerticalScroller = YES;
-		scrollView.autohidesScrollers = YES;
+		columnsScrollView = [[NSScrollView alloc] initWithFrame:NSZeroRect];
+		columnsScrollView.hasHorizontalScroller = YES;
+		columnsScrollView.hasVerticalScroller = NO;
+		columnsScrollView.autohidesScrollers = YES;
 
-		outlineView = [[NSOutlineView alloc] initWithFrame:NSZeroRect];
-		NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"Items"];
-		[outlineView addTableColumn:column];
-		outlineView.outlineTableColumn = column;
-		outlineView.headerView = nil;
-		outlineView.delegate = self;
-		outlineView.dataSource = self;
-		outlineView.allowsMultipleSelection = YES;
-		outlineView.allowsEmptySelection = YES;
-		[outlineView registerForDraggedTypes:@[ kBundleItemUUIDsPboardType ]];
-		[outlineView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
+		columnsView = [[NSSplitView alloc] initWithFrame:NSZeroRect];
+		columnsView.vertical = YES;
+		columnsView.dividerStyle = NSSplitViewDividerStyleThin;
+		columnsView.autosaveName = @"Bundle Editor Columns";
+		columnsView.autoresizingMask = NSViewHeightSizable;
 
-		scrollView.documentView = outlineView;
-		_browserViewController.view = scrollView;
+		columnsScrollView.documentView = columnsView;
+		_browserViewController.view = columnsScrollView;
 
-		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(outlineSelectionDidChange:) name:NSOutlineViewSelectionDidChangeNotification object:outlineView];
+		paneTables = [NSMutableArray array];
+		[self resetPanes];
 	}
 	return _browserViewController;
 }
 
-// The entry cache is filled lazily by the data source; this resolves any
-// identifier path (creating the wrapper when asked) so selection restore and
-// reveal can address rows that were never displayed.
-- (BEOutlineEntry*)wrapperForPath:(NSString*)path create:(BOOL)create
+// Miller columns: pane 0 lists bundles; each pane shows the children of the
+// previous pane’s selection, so the panes slide along the selection path for
+// arbitrarily deep menu nesting.
+- (NSTableView*)newPaneTableView
 {
-	if(BEOutlineEntry* wrapper = entryCache[path])
-		return wrapper;
-	if(!create || !bundles)
-		return nil;
+	NSScrollView* scrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, kPaneWidth, 100)];
+	scrollView.hasVerticalScroller = YES;
+	scrollView.autohidesScrollers = YES;
 
-	be::entry_ptr entry = bundles;
-	NSString* built = @"";
-	for(NSString* identifier in [path componentsSeparatedByString:kPathSeparator])
+	NSTableView* tableView = [[NSTableView alloc] initWithFrame:NSZeroRect];
+	NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"Items"];
+	column.resizingMask = NSTableColumnAutoresizingMask;
+	[tableView addTableColumn:column];
+	tableView.headerView = nil;
+	tableView.delegate = self;
+	tableView.dataSource = self;
+	tableView.allowsEmptySelection = YES;
+	[tableView registerForDraggedTypes:@[ kBundleItemUUIDsPboardType ]];
+	[tableView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
+
+	scrollView.documentView = tableView;
+	[columnsView addArrangedSubview:scrollView];
+	[paneTables addObject:tableView];
+	[self layoutPanes];
+	return tableView;
+}
+
+- (void)layoutPanes
+{
+	NSRect frame = columnsView.frame;
+	frame.size.width = kPaneWidth * [paneTables count];
+	columnsView.frame = frame;
+	for(NSTableView* tableView in paneTables)
+		tableView.allowsMultipleSelection = (tableView == [paneTables lastObject]);
+	[columnsScrollView scrollToEndOfDocument:nil];
+}
+
+- (void)resetPanes
+{
+	if(!columnsView || !paneTables)
 	{
-		be::entry_ptr match;
-		for(auto const& child : entry->children())
+		paneEntries.clear();
+		return;
+	}
+	for(NSTableView* tableView in paneTables)
+		[tableView.enclosingScrollView removeFromSuperview];
+	[paneTables removeAllObjects];
+	paneEntries.clear();
+	if(bundles)
+		[self appendPaneWithEntries:bundles->children()];
+}
+
+- (void)appendPaneWithEntries:(std::vector<be::entry_ptr> const&)entries
+{
+	NSTableView* tableView = [self newPaneTableView];
+	paneEntries.push_back(entries);
+	[tableView reloadData];
+	[self layoutPanes];
+}
+
+- (void)truncatePanesAfter:(NSInteger)pane
+{
+	while((NSInteger)[paneTables count] > pane + 1)
+	{
+		NSTableView* tableView = [paneTables lastObject];
+		[tableView.enclosingScrollView removeFromSuperview];
+		[paneTables removeLastObject];
+		paneEntries.pop_back();
+	}
+	[self layoutPanes];
+}
+
+// The editing panes follow the deepest selection; rows without an editable
+// item (menus, groups, Support files) leave the current document in place,
+// exactly like the old browser’s deepest column did.
+- (void)updateEditedItemFromSelection
+{
+	for(NSInteger pane = [paneTables count] - 1; pane >= 0; --pane)
+	{
+		if(be::entry_ptr entry = [self selectedEntryInPane:pane])
 		{
-			if(child->identifier() == to_s(identifier))
+			if(bundles::item_ptr item = entry->represented_item())
 			{
-				match = child;
+				if(item->kind() != bundles::kItemTypeMenu && item->kind() != bundles::kItemTypeMenuItemSeparator)
+					[self setBundleItem:item];
+				return;
+			}
+		}
+	}
+}
+
+- (be::entry_ptr)selectedEntryInPane:(NSInteger)pane
+{
+	if(pane < 0 || pane >= (NSInteger)[paneTables count])
+		return be::entry_ptr();
+	NSInteger row = [paneTables[pane] selectedRow];
+	if(row == -1 || row >= (NSInteger)paneEntries[pane].size())
+		return be::entry_ptr();
+	return paneEntries[pane][row];
+}
+
+// Selection restore walks one identifier path (first selection per pane), so
+// rebuilds keep the user where they were. Selecting a row cascades: panes
+// past it are truncated and a child pane appended when it has children.
+- (void)selectIdentifierPath:(NSArray*)path scroll:(BOOL)scroll
+{
+	for(NSInteger pane = 0; pane < (NSInteger)[path count]; ++pane)
+	{
+		if(pane >= (NSInteger)[paneTables count])
+			break;
+		NSString* identifier = path[pane];
+		for(size_t row = 0; row < paneEntries[pane].size(); ++row)
+		{
+			if(paneEntries[pane][row]->identifier() == to_s(identifier))
+			{
+				[paneTables[pane] selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+				if(scroll && pane == (NSInteger)[path count] - 1)
+					[paneTables[pane] scrollRowToVisible:row];
 				break;
 			}
 		}
-		if(!match)
-			return nil;
-		entry = match;
-		built = [built length] == 0 ? identifier : [built stringByAppendingFormat:@"%C%@", (unichar)0x1F, identifier];
 	}
-	if(![built isEqualToString:path])
-		return nil;
-
-	BEOutlineEntry* wrapper = [[BEOutlineEntry alloc] initWithEntry:entry path:path];
-	entryCache[path] = wrapper;
-	return wrapper;
-}
-
-- (void)expandAncestorsOfPath:(NSString*)path
-{
-	NSArray* components = [path componentsSeparatedByString:kPathSeparator];
-	NSMutableString* prefix = [NSMutableString string];
-	for(size_t i = 0; i + 1 < components.count; ++i)
-	{
-		if([prefix length] != 0)
-			[prefix appendFormat:@"%C", (unichar)0x1F];
-		[prefix appendString:components[i]];
-		if(BEOutlineEntry* ancestor = [self wrapperForPath:prefix create:YES])
-			[outlineView expandItem:ancestor];
-	}
-}
-
-- (NSInteger)rowForPath:(NSString*)path
-{
-	if(BEOutlineEntry* wrapper = [self wrapperForPath:path create:YES])
-		return [outlineView rowForItem:wrapper];
-	return -1;
 }
 
 - (NSViewController*)documentViewController
@@ -412,36 +442,51 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 
 - (void)didChangeBundleItems
 {
-	NSMutableArray* selection = [NSMutableArray array];
-	NSIndexSet* selectedRows = [outlineView selectedRowIndexes];
-	for(size_t i = [selectedRows firstIndex]; i != NSNotFound; i = [selectedRows indexGreaterThanIndex:i])
+	NSMutableArray* savedPath = [NSMutableArray array];
+	for(NSInteger pane = 0; pane < (NSInteger)[paneTables count]; ++pane)
 	{
-		if(BEOutlineEntry* wrapper = [outlineView itemAtRow:i])
-			[selection addObject:wrapper->_path];
+		NSInteger row = [paneTables[pane] selectedRow];
+		if(row == -1 || row >= (NSInteger)paneEntries[pane].size())
+			break;
+		[savedPath addObject:[NSString stringWithCxxString:paneEntries[pane][row]->identifier()]];
 	}
-	NSSet* expanded = [expandedPaths copy];
 
 	bundles = be::bundle_entries();
-	entryCache = [NSMutableDictionary dictionary];
-	[outlineView reloadData];
-	[outlineView expandItem:nil expandChildren:YES];
+	[self resetPanes];
+	[self selectIdentifierPath:savedPath scroll:NO];
+}
 
-	for(NSString* path in expanded)
+// Identifier path (bundle, component, item) locating anItem in the tree, or
+// nil when it is not on display. Drives reveal without any widget state.
+- (NSArray*)identifierPathForItem:(bundles::item_ptr const&)anItem
+{
+	std::vector<be::entry_ptr> const& allBundles = bundles->children();
+	iterate(bundle, allBundles)
 	{
-		if(BEOutlineEntry* wrapper = [self wrapperForPath:path create:YES])
-			[outlineView expandItem:wrapper];
-	}
+		if((anItem->bundle() ?: anItem) != (*bundle)->represented_item())
+			continue;
 
-	NSMutableIndexSet* rows = [NSMutableIndexSet indexSet];
-	for(NSString* path in selection)
-	{
-		[self expandAncestorsOfPath:path];
-		NSInteger row = [self rowForPath:path];
-		if(row != -1)
-			[rows addIndex:row];
+		NSMutableArray* base = [NSMutableArray arrayWithObject:[NSString stringWithCxxString:(*bundle)->identifier()]];
+		for(std::vector< std::pair<std::vector<be::entry_ptr>, int> > stack(1, std::make_pair((*bundle)->children(), -1)); !stack.empty(); stack.pop_back())
+		{
+			for(++stack.back().second; stack.back().second < stack.back().first.size(); ++stack.back().second)
+			{
+				be::entry_ptr entry = stack.back().first[stack.back().second];
+				if(entry->has_children())
+				{
+					stack.emplace_back(entry->children(), -1);
+				}
+				else if(entry->represented_item() == anItem)
+				{
+					NSMutableArray* path = [base mutableCopy];
+					for(size_t j = 0; j < stack.size(); ++j)
+						[path addObject:[NSString stringWithCxxString:stack[j].first[stack[j].second]->identifier()]];
+					return path;
+				}
+			}
+		}
 	}
-	if([rows count] != 0)
-		[outlineView selectRowIndexes:rows byExtendingSelection:NO];
+	return nil;
 }
 
 - (void)didChangeModifiedState
@@ -465,51 +510,55 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 	if(!(aType & bundles::kItemTypeMenuTypes) || !bundle)
 		return;
 
-	NSInteger selectedRow = [outlineView selectedRow];
-	if(selectedRow == -1)
-		return;
-
-	BEOutlineEntry* selected = [outlineView itemAtRow:selectedRow];
-	NSArray* components = [selected->_path componentsSeparatedByString:kPathSeparator];
-	if(components.count < 2)
-		return; // bundle itself selected: legacy top-level placement
-
-	oak::uuid_t menuContext;
-	NSMutableString* prefix = [NSMutableString string];
-	for(size_t i = 0; i + 1 < components.count; ++i)
-	{
-		if([prefix length] != 0)
-			[prefix appendFormat:@"%C", (unichar)0x1F];
-		[prefix appendString:components[i]];
-		if(BEOutlineEntry* ancestor = [self wrapperForPath:prefix create:YES])
-		{
-			if(bundles::item_ptr represented = ancestor->_entry->represented_item())
-			{
-				if(represented->kind() == bundles::kItemTypeMenu)
-					menuContext = represented->uuid();
-				else if(ancestor->_entry->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
-					menuContext = represented->uuid();
-			}
-		}
-	}
-	be::entry_ptr entry = selected->_entry;
-
+	// Walk the selection path for the deepest menu context: a submenu becomes
+	// the parent, a plain leaf means “below this item” when it already lives
+	// in the context menu. Anything else — bundle-only, kind groups, Support
+	// files — keeps the legacy behavior.
 	oak::uuid_t targetMenu;
 	oak::uuid_t afterItem;
-	if(bundles::item_ptr represented = entry->represented_item())
+	for(NSInteger pane = 1; pane < (NSInteger)[paneTables count]; ++pane)
 	{
-		if(represented->kind() == bundles::kItemTypeMenu)
-			targetMenu = represented->uuid();
-		else if(menuContext && !entry->has_children())
+		be::entry_ptr entry = [self selectedEntryInPane:pane];
+		if(!entry)
+			break;
+		if(bundles::item_ptr represented = entry->represented_item())
 		{
-			targetMenu = menuContext;
-			if(represented->parent_menu() == menuContext)
+			if(represented->kind() == bundles::kItemTypeMenu)
+			{
+				targetMenu = represented->uuid();
+				afterItem = oak::uuid_t();
+			}
+			else if(entry->has_children())
+			{
+				return;
+			}
+			else if(targetMenu && represented->parent_menu() == targetMenu)
+			{
 				afterItem = represented->uuid();
+			}
+			else if(targetMenu)
+			{
+				afterItem = oak::uuid_t();
+			}
+			else
+			{
+				return;
+			}
 		}
-	}
-	else if(entry->identifier() == "Menu Actions")
-	{
-		targetMenu = bundle->uuid();
+		else if(entry->identifier() == "Menu Actions")
+		{
+			// Reached only at pane 1 with the bundle behind it.
+			if(be::entry_ptr bundleEntry = [self selectedEntryInPane:0])
+			{
+				if(bundles::item_ptr bundleItem = bundleEntry->represented_item())
+					targetMenu = bundleItem->uuid();
+			}
+			afterItem = oak::uuid_t();
+		}
+		else
+		{
+			return;
+		}
 	}
 	if(!targetMenu)
 		return;
@@ -531,13 +580,8 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 		return;
 
 	bundles::item_ptr bundle;
-	if([outlineView selectedRow] != -1)
-	{
-		BEOutlineEntry* selected = [outlineView itemAtRow:[outlineView selectedRow]];
-		NSString* topIdentifier = [selected->_path componentsSeparatedByString:kPathSeparator][0];
-		if(BEOutlineEntry* bundleEntry = [self wrapperForPath:topIdentifier create:YES])
-			bundle = bundleEntry->_entry->represented_item();
-	}
+	if(be::entry_ptr selected = [self selectedEntryInPane:0])
+		bundle = selected->represented_item();
 	if(aType == bundles::kItemTypeBundle || bundle)
 	{
 		std::map<std::string, std::string> environment = variables_for_path(oak::basic_environment());
@@ -595,24 +639,18 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 
 		bundles::item_ptr newSelectedItem;
 		bool foundItem = false;
-		be::entry_ptr siblings;
-		if(BEOutlineEntry* selected = [outlineView itemAtRow:[outlineView selectedRow]])
+		NSInteger deepPane = -1;
+		for(NSInteger pane = [paneTables count] - 1; pane >= 0; --pane)
 		{
-			NSString* path = selected->_path;
-			NSRange lastSeparator = [path rangeOfString:kPathSeparator options:NSBackwardsSearch];
-			NSString* parentPath = lastSeparator.location == NSNotFound ? nil : [path substringToIndex:lastSeparator.location];
-			if(!parentPath)
+			if([paneTables[pane] selectedRow] != -1)
 			{
-				siblings = bundles;
-			}
-			else if(BEOutlineEntry* parent = [self wrapperForPath:parentPath create:YES])
-			{
-				siblings = parent->_entry;
+				deepPane = pane;
+				break;
 			}
 		}
-		if(siblings)
+		if(deepPane != -1)
 		{
-			for(auto const& entry : siblings->children())
+			for(auto const& entry : paneEntries[deepPane])
 			{
 				if(bundles::item_ptr item = entry->represented_item())
 				{
@@ -658,43 +696,7 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 		[self didChangeModifiedState];
 	}
 
-	std::vector<be::entry_ptr> const& allBundles = bundles->children();
-	iterate(bundle, allBundles)
-	{
-		if((anItem->bundle() ?: anItem) != (*bundle)->represented_item())
-			continue;
-
-		for(std::vector< std::pair<std::vector<be::entry_ptr>, int> > stack(1, std::make_pair((*bundle)->children(), -1)); !stack.empty(); stack.pop_back())
-		{
-			for(++stack.back().second; stack.back().second < stack.back().first.size(); ++stack.back().second)
-			{
-				be::entry_ptr entry = stack.back().first[stack.back().second];
-				if(entry->has_children())
-				{
-					stack.emplace_back(entry->children(), -1);
-				}
-				else if(entry->represented_item() == anItem)
-				{
-					// The stack records one (children, index) frame per level
-					// below the bundle; replay it into an identifier path.
-					NSMutableString* path = [NSMutableString stringWithString:[NSString stringWithCxxString:(*bundle)->identifier()]];
-					for(size_t j = 0; j < stack.size(); ++j)
-					{
-						be::entry_ptr step = stack[j].first[stack[j].second];
-						[path appendFormat:@"%C%s", (unichar)0x1F, step->identifier().c_str()];
-					}
-					[self expandAncestorsOfPath:path];
-					NSInteger row = [self rowForPath:path];
-					if(row != -1)
-					{
-						[outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
-						[outlineView scrollRowToVisible:row];
-					}
-					return;
-				}
-			}
-		}
-	}
+	[self selectIdentifierPath:[self identifierPathForItem:anItem] scroll:YES];
 }
 
 - (BOOL)commitEditing
@@ -808,39 +810,35 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 	[self didChangeModifiedState];
 }
 
-// ========================
-// = NSOutlineView support =
-// ========================
+// =====================
+// = Column data source =
+// =====================
 
-- (NSInteger)outlineView:(NSOutlineView*)anOutlineView numberOfChildrenOfItem:(id)item
+- (NSInteger)columnIndexForTableView:(NSTableView*)tableView
 {
-	be::entry_ptr entry = item ? ((BEOutlineEntry*)item)->_entry : bundles;
-	return entry && entry->has_children() ? entry->children().size() : 0;
+	NSUInteger index = [paneTables indexOfObject:tableView];
+	return index == NSNotFound ? -1 : (NSInteger)index;
 }
 
-- (id)outlineView:(NSOutlineView*)anOutlineView child:(NSInteger)index ofItem:(id)item
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)tableView
 {
-	be::entry_ptr parent = item ? ((BEOutlineEntry*)item)->_entry : bundles;
-	be::entry_ptr child = parent->children()[index];
-	NSString* parentPath = item ? ((BEOutlineEntry*)item)->_path : @"";
-	NSString* path = [parentPath length] == 0
-		? [NSString stringWithCxxString:child->identifier()]
-		: [parentPath stringByAppendingFormat:@"%C%s", (unichar)0x1F, child->identifier().c_str()];
-	if(BEOutlineEntry* wrapper = entryCache[path])
-		return wrapper;
-	BEOutlineEntry* wrapper = [[BEOutlineEntry alloc] initWithEntry:child path:path];
-	entryCache[path] = wrapper;
-	return wrapper;
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	if(pane == -1 || pane >= (NSInteger)paneEntries.size())
+		return 0;
+	return paneEntries[pane].size();
 }
 
-- (BOOL)outlineView:(NSOutlineView*)anOutlineView isItemExpandable:(id)item
+- (NSView*)tableView:(NSTableView*)tableView viewForTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row
 {
-	return ((BEOutlineEntry*)item)->_entry->has_children();
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	if(pane == -1 || pane >= (NSInteger)paneEntries.size() || row < 0 || row >= (NSInteger)paneEntries[pane].size())
+		return nil;
+	return [self cellViewForEntry:paneEntries[pane][row] inTableView:tableView];
 }
 
-- (NSView*)outlineView:(NSOutlineView*)anOutlineView viewForTableColumn:(NSTableColumn*)tableColumn item:(id)item
+- (NSView*)cellViewForEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView
 {
-	NSTableCellView* cell = [anOutlineView makeViewWithIdentifier:@"BundleItemCell" owner:self];
+	NSTableCellView* cell = [tableView makeViewWithIdentifier:@"BundleItemCell" owner:self];
 	if(!cell)
 	{
 		cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 200, 20)];
@@ -857,8 +855,6 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 		cell.imageView = imageView;
 		cell.textField = textField;
 	}
-
-	be::entry_ptr entry = ((BEOutlineEntry*)item)->_entry;
 
 	static NSMutableParagraphStyle* paragraphStyle = nil;
 	if(!paragraphStyle)
@@ -930,18 +926,6 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 	return cell;
 }
 
-- (void)outlineViewItemDidExpand:(NSNotification*)notification
-{
-	if(BEOutlineEntry* wrapper = notification.userInfo[@"NSObject"])
-		[expandedPaths addObject:wrapper->_path];
-}
-
-- (void)outlineViewItemDidCollapse:(NSNotification*)notification
-{
-	if(BEOutlineEntry* wrapper = notification.userInfo[@"NSObject"])
-		[expandedPaths removeObject:wrapper->_path];
-}
-
 // Apply a validated drop: plist edits first (per item, so memory and disk
 // stay consistent even if a later item fails), then the in-memory index.
 // The caller computed index against the pre-drop listing.
@@ -983,40 +967,40 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 	return YES;
 }
 
-// The drop parent is the outline parent for Above drops (or the row itself
-// for On drops). Only menu contexts accept: the Menu Actions root (addressed
-// by the bundle uuid) or a submenu. Everything else — kind groups, Other
-// Actions, Support files, bundle rows — keeps kind-driven placement.
-- (BOOL)dropTargetForParent:(BEOutlineEntry*)parent anchor:(BEOutlineEntry*)anchor appending:(BOOL)appending intoMenu:(oak::uuid_t*)outMenu atIndex:(size_t*)outIndex
+// Menu owning a pane’s rows: the selected entry of the previous pane names it
+// (Menu Actions root → bundle uuid, submenu → its uuid). Anything else (kind
+// groups, Other Actions, Support files, bundles, nothing) is not a menu.
+- (oak::uuid_t)menuContextForPane:(NSInteger)pane
 {
-	if(!parent)
-		return NO;
-
-	be::entry_ptr entry = parent->_entry;
-	bundles::item_ptr represented = entry->represented_item();
-	oak::uuid_t menu;
-	if(entry->identifier() == "Menu Actions" && represented && represented->kind() == bundles::kItemTypeBundle)
-		menu = represented->uuid();
-	else if(represented && represented->kind() == bundles::kItemTypeMenu)
-		menu = represented->uuid();
-	else
-		return NO;
-
-	size_t index = entry->children().size();
-	if(!appending && anchor)
+	if(pane < 1 || pane >= (NSInteger)[paneTables count])
+		return oak::uuid_t();
+	be::entry_ptr container = [self selectedEntryInPane:pane - 1];
+	if(!container)
+		return oak::uuid_t();
+	if(bundles::item_ptr represented = container->represented_item())
 	{
-		for(size_t i = 0; i < entry->children().size(); ++i)
+		if(represented->kind() == bundles::kItemTypeMenu)
+			return represented->uuid();
+		if(container->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
+			return represented->uuid();
+	}
+	return oak::uuid_t();
+}
+
+// Position of an item among a pane’s rows by uuid, or SIZE_MAX.
+- (size_t)rowForItemUUID:(oak::uuid_t const&)uuid inPane:(NSInteger)pane
+{
+	if(pane < 0 || pane >= (NSInteger)[paneTables count])
+		return SIZE_MAX;
+	for(size_t row = 0; row < paneEntries[pane].size(); ++row)
+	{
+		if(bundles::item_ptr item = paneEntries[pane][row]->represented_item())
 		{
-			if(entry->children()[i]->identifier() == anchor->_entry->identifier())
-			{
-				index = i;
-				break;
-			}
+			if(item->uuid() == uuid)
+				return row;
 		}
 	}
-	*outMenu = menu;
-	*outIndex = index;
-	return YES;
+	return SIZE_MAX;
 }
 
 - (NSArray*)draggedUUIDsFromPasteboard:(NSPasteboard*)pboard inBundle:(bundles::item_ptr const&)bundle
@@ -1037,12 +1021,19 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 	return uuids;
 }
 
-- (BOOL)outlineView:(NSOutlineView*)anOutlineView writeItems:(NSArray*)items toPasteboard:(NSPasteboard*)pboard
+// Only the last pane drags out, and only menu-type rows travel: bundles,
+// menus, groups, Support files, and separators refuse the whole drag.
+- (BOOL)tableView:(NSTableView*)tableView writeRowsWithIndexes:(NSIndexSet*)rowIndexes toPasteboard:(NSPasteboard*)pboard
 {
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	if(pane == -1 || pane != (NSInteger)[paneTables count] - 1)
+		return NO;
 	NSMutableArray* uuids = [NSMutableArray array];
-	for(BEOutlineEntry* wrapper in items)
+	for(size_t row = [rowIndexes firstIndex]; row != NSNotFound; row = [rowIndexes indexGreaterThanIndex:row])
 	{
-		bundles::item_ptr item = wrapper->_entry->represented_item();
+		if(row >= paneEntries[pane].size())
+			return NO;
+		bundles::item_ptr item = paneEntries[pane][row]->represented_item();
 		if(!item || !(item->kind() & bundles::kItemTypeMenuTypes))
 			return NO;
 		[uuids addObject:[NSString stringWithCxxString:to_s(item->uuid())]];
@@ -1054,47 +1045,18 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 	return YES;
 }
 
-- (NSDragOperation)outlineView:(NSOutlineView*)anOutlineView validateDrop:(id<NSDraggingInfo>)info proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)operation
+// Drops land in two places: between last-pane rows (reorder within that
+// pane’s menu) or onto a menu row in any pane (append into it). Bundles,
+// kind groups, Other Actions, and Support files never accept.
+- (NSDragOperation)tableView:(NSTableView*)tableView validateDrop:(id<NSDraggingInfo>)info proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)operation
 {
-	if(info.draggingSource != anOutlineView)
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	NSInteger lastPane = (NSInteger)[paneTables count] - 1;
+	if(pane == -1 || info.draggingSource != paneTables[lastPane])
 		return NSDragOperationNone;
 
-	BEOutlineEntry* anchor = row < [anOutlineView numberOfRows] ? [anOutlineView itemAtRow:row] : nil;
-	BEOutlineEntry* parent = nil;
-	BOOL appending = NO;
-	if(operation == NSTableViewDropOn)
-	{
-		if(!anchor)
-			return NSDragOperationNone;
-		parent = anchor;
-		appending = YES;
-	}
-	else
-	{
-		if(row >= [anOutlineView numberOfRows])
-		{
-			// Below the last row: append to that row’s parent menu.
-			if([anOutlineView numberOfRows] == 0)
-				return NSDragOperationNone;
-			anchor = [anOutlineView itemAtRow:[anOutlineView numberOfRows] - 1];
-			parent = [anOutlineView parentForItem:anchor];
-			appending = YES;
-		}
-		else
-		{
-			if(!anchor)
-				return NSDragOperationNone;
-			parent = [anOutlineView parentForItem:anchor];
-		}
-	}
-
-	oak::uuid_t menu;
-	size_t index = 0;
-	if(![self dropTargetForParent:parent anchor:appending ? nil : anchor appending:appending intoMenu:&menu atIndex:&index])
-		return NSDragOperationNone;
-
-	// The payload names the bundle: submenu uuids are not bundles, so the
-	// target menu alone cannot identify it.
+	// The payload names the bundle; every dragged item must live in it and
+	// the drop target must belong to it too.
 	bundles::item_ptr bundle;
 	NSArray* strings = [info.draggingPasteboard propertyListForType:kBundleItemUUIDsPboardType];
 	if([strings isKindOfClass:[NSArray class]] && [strings count] != 0 && [strings[0] isKindOfClass:[NSString class]])
@@ -1102,8 +1064,73 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 		if(bundles::item_ptr first = bundles::lookup(to_s((NSString*)strings[0])))
 			bundle = first->bundle();
 	}
-	if(!bundle)
+	be::entry_ptr shownBundle = [self selectedEntryInPane:0];
+	if(!bundle || !shownBundle || shownBundle->represented_item() != bundle)
 		return NSDragOperationNone;
+	NSArray* uuids = [self draggedUUIDsFromPasteboard:info.draggingPasteboard inBundle:bundle];
+	if(!uuids)
+		return NSDragOperationNone;
+
+	oak::uuid_t menu;
+	size_t index = 0;
+	if(pane == lastPane)
+	{
+		menu = [self menuContextForPane:pane];
+		if(!menu)
+			return NSDragOperationNone;
+		if(operation == NSTableViewDropOn)
+		{
+			// Onto a submenu row moves into it; onto a plain row behaves as
+			// dropping above that row.
+			if(row >= 0 && row < (NSInteger)paneEntries[pane].size())
+			{
+				if(bundles::item_ptr anchor = paneEntries[pane][row]->represented_item())
+				{
+					if(anchor->kind() == bundles::kItemTypeMenu)
+					{
+						menu = anchor->uuid();
+						index = anchor->menu(true).size();
+					}
+					else
+					{
+						index = row;
+					}
+				}
+				else
+				{
+					return NSDragOperationNone;
+				}
+			}
+			else
+			{
+				index = paneEntries[pane].size();
+			}
+		}
+		else
+		{
+			index = std::min<size_t>(row < 0 ? paneEntries[pane].size() : row, paneEntries[pane].size());
+		}
+	}
+	else
+	{
+		if(row < 0 || row >= (NSInteger)paneEntries[pane].size())
+			return NSDragOperationNone;
+		be::entry_ptr target = paneEntries[pane][row];
+		if(bundles::item_ptr represented = target->represented_item())
+		{
+			if(represented->kind() == bundles::kItemTypeMenu)
+				menu = represented->uuid();
+			else if(target->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
+				menu = represented->uuid();
+			else
+				return NSDragOperationNone;
+		}
+		else
+		{
+			return NSDragOperationNone;
+		}
+		index = target->has_children() ? target->children().size() : 0;
+	}
 
 	// The target menu must belong to the payload’s bundle.
 	BOOL sameBundle = (menu == bundle->uuid());
@@ -1115,56 +1142,75 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 	if(!sameBundle)
 		return NSDragOperationNone;
 
-	NSArray* uuids = [self draggedUUIDsFromPasteboard:info.draggingPasteboard inBundle:bundle];
-	if(!uuids)
-		return NSDragOperationNone;
-
 	// Dropping a single item onto its own slot is a no-op, not a move.
-	if([uuids count] == 1 && parent)
+	if([uuids count] == 1 && pane == lastPane && operation != NSTableViewDropOn)
 	{
 		bundles::item_ptr item = bundles::lookup(to_s((NSString*)uuids[0]));
-		if(item && item->parent_menu() == menu)
-		{
-			size_t current = 0;
-			bool found = false;
-			for(auto const& sibling : parent->_entry->children())
-			{
-				if(sibling->represented_item() && sibling->represented_item()->uuid() == item->uuid())
-				{
-					found = true;
-					break;
-				}
-				++current;
-			}
-			if(found && (appending ? current + 1 >= parent->_entry->children().size() : index == current))
-				return NSDragOperationNone;
-		}
+		if(item && item->parent_menu() == menu && index == [self rowForItemUUID:item->uuid() inPane:pane])
+			return NSDragOperationNone;
 	}
 	return NSDragOperationMove;
 }
 
-- (BOOL)outlineView:(NSOutlineView*)anOutlineView acceptDrop:(id<NSDraggingInfo>)info item:(id)targetItem childIndex:(NSInteger)index
+- (BOOL)tableView:(NSTableView*)tableView acceptDrop:(id<NSDraggingInfo>)info row:(NSInteger)row dropOperation:(NSTableViewDropOperation)operation
 {
-	BEOutlineEntry* parent = nil;
-	BOOL appending = NO;
-	if(index == NSOutlineViewDropOnItemIndex)
-	{
-		parent = targetItem;
-		appending = YES;
-	}
-	else
-	{
-		parent = targetItem;
-	}
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	NSInteger lastPane = (NSInteger)[paneTables count] - 1;
+	if(pane == -1)
+		return NO;
 
 	oak::uuid_t menu;
 	size_t at = 0;
-	if(![self dropTargetForParent:parent anchor:nil appending:appending intoMenu:&menu atIndex:&at])
-		return NO;
-	if(!appending)
-		at = index < 0 ? at : (size_t)index;
+	if(pane == lastPane)
+	{
+		menu = [self menuContextForPane:pane];
+		if(!menu)
+			return NO;
+		if(operation == NSTableViewDropOn && row >= 0 && row < (NSInteger)paneEntries[pane].size())
+		{
+			if(bundles::item_ptr anchor = paneEntries[pane][row]->represented_item())
+			{
+				if(anchor->kind() == bundles::kItemTypeMenu)
+				{
+					menu = anchor->uuid();
+					at = anchor->menu(true).size();
+				}
+				else
+				{
+					at = row;
+				}
+			}
+			else
+			{
+				return NO;
+			}
+		}
+		else
+		{
+			at = std::min<size_t>(row < 0 ? paneEntries[pane].size() : row, paneEntries[pane].size());
+		}
+	}
+	else
+	{
+		if(row < 0 || row >= (NSInteger)paneEntries[pane].size())
+			return NO;
+		be::entry_ptr target = paneEntries[pane][row];
+		if(bundles::item_ptr represented = target->represented_item())
+		{
+			if(represented->kind() == bundles::kItemTypeMenu)
+				menu = represented->uuid();
+			else if(target->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
+				menu = represented->uuid();
+			else
+				return NO;
+		}
+		else
+		{
+			return NO;
+		}
+		at = target->has_children() ? target->children().size() : 0;
+	}
 
-	// Resolve the bundle through the payload (submenus are not bundles).
 	bundles::item_ptr bundle;
 	NSArray* strings = [info.draggingPasteboard propertyListForType:kBundleItemUUIDsPboardType];
 	if([strings isKindOfClass:[NSArray class]] && [strings count] != 0 && [strings[0] isKindOfClass:[NSString class]])
@@ -1177,13 +1223,12 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 		return NO;
 
 	// Adjust for dragged rows above the drop point within the same menu.
-	if(!appending)
+	if(pane == lastPane && operation != NSTableViewDropOn)
 	{
-		be::entry_ptr entry = parent->_entry;
 		size_t above = 0;
-		for(size_t i = 0; i < (size_t)index && i < entry->children().size(); ++i)
+		for(size_t i = 0; i < at && i < paneEntries[pane].size(); ++i)
 		{
-			if(bundles::item_ptr sibling = entry->children()[i]->represented_item())
+			if(bundles::item_ptr sibling = paneEntries[pane][i]->represented_item())
 			{
 				NSString* siblingUUID = [NSString stringWithCxxString:to_s(sibling->uuid())];
 				if([uuids containsObject:siblingUUID])
@@ -1267,20 +1312,22 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 }
 
 // ===================
-// = Outline selection =
+// = Column selection =
 // ===================
 
-- (void)outlineSelectionDidChange:(NSNotification*)notification
+- (void)tableViewSelectionDidChange:(NSNotification*)notification
 {
-	NSInteger row = [outlineView selectedRow];
-	if(row != -1)
+	NSTableView* table = notification.object;
+	NSInteger pane = [self columnIndexForTableView:table];
+	if(pane == -1)
+		return;
+	[self truncatePanesAfter:pane];
+	if(be::entry_ptr selected = [self selectedEntryInPane:pane])
 	{
-		if(bundles::item_ptr item = ((BEOutlineEntry*)[outlineView itemAtRow:row])->_entry->represented_item())
-		{
-			if(item->kind() != bundles::kItemTypeMenu && item->kind() != bundles::kItemTypeMenuItemSeparator)
-				[self setBundleItem:item];
-		}
+		if(selected->has_children())
+			[self appendPaneWithEntries:selected->children()];
 	}
+	[self updateEditedItemFromSelection];
 }
 
 // =======================
