@@ -55,6 +55,7 @@
 - (void)didChangeBundleItems;
 - (void)didChangeModifiedState;
 - (void)resetPanes;
+- (void)selectFirstRows;
 - (void)appendPaneWithEntries:(std::vector<be::entry_ptr> const&)entries;
 - (void)truncatePanesAfter:(NSInteger)pane;
 - (void)layoutPanes;
@@ -204,6 +205,10 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 		bundles = be::bundle_entries();
 		[self resetPanes];
 
+		// Pre-draw the child panes: browserViewController above ran while
+		// bundles was still nil, so its reset built no panes to select.
+		[self selectFirstRows];
+
 		if([paneTables count] != 0)
 			[self.window makeFirstResponder:paneTables[0]];
 	}
@@ -226,6 +231,8 @@ static CGFloat const kPaneWidth = 190;
 		columnsView = [[NSSplitView alloc] initWithFrame:NSZeroRect];
 		columnsView.vertical = YES;
 		columnsView.dividerStyle = NSSplitViewDividerStyleThin;
+		// No autosaveName: panes are transient (rebuilt on every change) and
+		// restored divider positions squeeze the new panes.
 		columnsView.autoresizingMask = NSViewHeightSizable;
 
 		columnsScrollView.documentView = columnsView;
@@ -233,17 +240,7 @@ static CGFloat const kPaneWidth = 190;
 
 		paneTables = [NSMutableArray array];
 		[self resetPanes];
-
-		// Draw the first columns up front: selecting the first bundle shows
-		// its components, and selecting the first component shows its items,
-		// so the editor opens on bundles | components | items.
-		// No autosaveName on columnsView: panes are transient (rebuilt on
-		// every change), and restored divider positions squeeze new panes.
-		for(NSInteger pane = 0; pane < 2 && pane < (NSInteger)[paneTables count]; ++pane)
-		{
-			if([(NSTableView*)paneTables[pane] numberOfRows] != 0)
-				[(NSTableView*)paneTables[pane] selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
-		}
+		[self selectFirstRows];
 	}
 	return _browserViewController;
 }
@@ -301,6 +298,18 @@ static CGFloat const kPaneWidth = 190;
 	paneEntries.clear();
 	if(bundles)
 		[self appendPaneWithEntries:bundles->children()];
+}
+
+- (void)selectFirstRows
+{
+	// Draw the first columns up front: selecting the first bundle shows
+	// its components, and selecting the first component shows its items,
+	// so the editor opens on bundles | components | items.
+	for(NSInteger pane = 0; pane < 2 && pane < (NSInteger)[paneTables count]; ++pane)
+	{
+		if([(NSTableView*)paneTables[pane] numberOfRows] != 0)
+			[(NSTableView*)paneTables[pane] selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+	}
 }
 
 - (void)appendPaneWithEntries:(std::vector<be::entry_ptr> const&)entries
