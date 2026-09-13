@@ -45,6 +45,11 @@ bool add_submenu_to_main_menu (plist::dictionary_t& info_plist, std::string cons
 // false without touching info_plist when the menu is missing, the index is
 // out of bounds, or the entry there is not a divider.
 bool remove_separator_from_main_menu_at_index (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, size_t index);
+
+// Delete mainMenu.submenus.<submenu_uuid> and remove its reference from the
+// addressed parent menu’s items array. Returns false without touching
+// info_plist when the parent menu or the submenu record does not exist.
+bool remove_submenu_from_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& parent_menu_uuid, std::string const& submenu_uuid);
 }
 
 #endif /* end of include guard: LOAD_H_C8BVI372 */

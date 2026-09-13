@@ -288,6 +288,24 @@ namespace bundles
 		notify_changed();
 	}
 
+	std::vector<oak::uuid_t> menu_members (oak::uuid_t const& menu_uuid)
+	{
+		if(auto menu = AllMenus.find(menu_uuid); menu != AllMenus.end())
+			return menu->second;
+		return std::vector<oak::uuid_t>();
+	}
+
+	void rename_item (oak::uuid_t const& item_uuid, std::string const& new_name)
+	{
+		if(item_ptr item = lookup(item_uuid))
+		{
+			Callbacks(&callback_t::bundles_will_change);
+			item->set_name(new_name);
+			cache().clear();
+			notify_changed();
+		}
+	}
+
 	void remove_item (item_ptr item)
 	{
 		iterate(it, AllItems)

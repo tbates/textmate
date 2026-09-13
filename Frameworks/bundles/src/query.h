@@ -60,6 +60,16 @@ namespace bundles
 	// remove_separator_from_main_menu_at_index().
 	void remove_separator_from_menu_at_index (oak::uuid_t const& menu_uuid, size_t index);
 
+// Member uuids of the menu, in order; unknown menus give an empty list.
+// Raw index state: remove_item() does not scrub memberships, so trashed
+// items leave ghosts — callers judging emptiness should resolve each member
+// via lookup(), mirroring how the loader skips unresolvable entries.
+	std::vector<oak::uuid_t> menu_members (oak::uuid_t const& menu_uuid);
+
+// Change the item’s name, invalidating name lookups. In-memory index only;
+// persist submenu renames with add_submenu_to_main_menu().
+	void rename_item (oak::uuid_t const& item_uuid, std::string const& new_name);
+
 	std::vector<item_ptr> query (std::string const& field, std::string const& value, scope::context_t const& scope = scope::wildcard, int kind = kItemTypeMost, oak::uuid_t const& bundle = oak::uuid_t(), bool filter = true, bool includeDisabledItems = false, bool resolveProxyItems = true);
 	std::vector<item_ptr> items_for_proxy (item_ptr proxyItem, scope::context_t const& scope = scope::wildcard, int kind = kItemTypeCommand|kItemTypeDragCommand|kItemTypeGrammar|kItemTypeMacro|kItemTypeSnippet|kItemTypeProxy|kItemTypeTheme, oak::uuid_t const& bundle = oak::uuid_t(), bool filter = true, bool includeDisabledItems = false);
 	item_ptr lookup (oak::uuid_t const& uuid);

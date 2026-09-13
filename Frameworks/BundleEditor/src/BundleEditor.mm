@@ -75,9 +75,11 @@
 - (void)addContextItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
 - (BOOL)paneTableViewDidPressRightArrow:(NSTableView*)tableView;
 - (void)deleteDividerAtAnchor:(NSMenuItem*)sender;
+- (void)deleteCategoryAtAnchor:(NSMenuItem*)sender;
 - (void)paneTableViewDraggingSessionDidEnd:(BEPaneTableView*)tableView;
 - (void)flushPendingRebuild;
 - (NSMenu*)contextMenuForTableView:(NSTableView*)tableView row:(NSInteger)row;
+- (void)renameCategoryAtAnchor:(NSMenuItem*)sender;
 - (void)appendPaneWithEntries:(std::vector<be::entry_ptr> const&)entries;
 - (void)truncatePanesAfter:(NSInteger)pane;
 - (void)layoutPanes;
@@ -866,8 +868,24 @@ static CGFloat const kPaneWidth = 190;
 	}
 
 	if(plist::equal(plist, bundleItem->plist()))
-			changes.erase(bundleItem);
-	else	changes[bundleItem] = plist;
+		changes.erase(bundleItem);
+	else
+	{
+		changes[bundleItem] = plist;
+		// The Miller lists render live index names, so a committed rename
+		// must reach the in-memory index here — waiting for save’s
+		// reloadPath is what left the stale name visible until save. Blank
+		// names are refused, matching the in-place category editor.
+		plist::dictionary_t::const_iterator nameField = plist.find(bundles::kFieldName);
+		if(nameField != plist.end())
+		{
+			if(std::string const* newName = plist::get<std::string>(&nameField->second))
+			{
+				if(!newName->empty() && *newName != bundleItem->name())
+					bundles::rename_item(bundleItem->uuid(), *newName);
+			}
+		}
+	}
 
 	propertiesChanged = NO;
 	[bundleItemContent markDocumentSaved];
@@ -1049,6 +1067,22 @@ static CGFloat const kPaneWidth = 190;
 		if(entry->identifier() == "Menu Actions")
 		{
 			[self addInsertItemsToMenu:menu forEntry:entry inTableView:tableView];
+			return;
+		}
+
+		// Submenu rows get an in-place rename above the inserts. The bundle
+		// root (“Menu Actions”) is structural and keeps no rename item.
+		if(item->kind() == bundles::kItemTypeMenu)
+		{
+			if(NSArray* anchor = [self addInsertItemsToMenu:menu forEntry:entry inTableView:tableView])
+			{
+				NSMenuItem* deleteItem = [menu insertItemWithTitle:@"Delete Category" action:@selector(deleteCategoryAtAnchor:) keyEquivalent:@"" atIndex:0];
+				deleteItem.target = self;
+				deleteItem.representedObject = anchor;
+				NSMenuItem* renameItem = [menu insertItemWithTitle:@"Rename Category…" action:@selector(renameCategoryAtAnchor:) keyEquivalent:@"" atIndex:0];
+				renameItem.target = self;
+				renameItem.representedObject = anchor;
+			}
 			return;
 		}
 
@@ -1746,6 +1780,136 @@ static CGFloat const kPaneWidth = 190;
 	NSTableView* tableView = paneTables[pane];
 	if(NSInteger rows = [tableView numberOfRows])
 		[tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:MIN((NSInteger)index, rows - 1)] byExtendingSelection:NO];
+	[self didChangeModifiedState];
+}
+
+// Delete the category at the anchor row. Refuses with an alert unless the
+// submenu is empty — drag its items out (or delete its dividers) first.
+// Emptiness counts only resolvable members: remove_item() leaves ghosts in
+// the membership lists, so trashed items must not block the delete.
+- (void)deleteCategoryAtAnchor:(NSMenuItem*)sender
+{
+	oak::uuid_t parentMenu;
+	bundles::item_ptr bundle;
+	size_t at = 0;
+	NSInteger pane = -1;
+	if(![self insertionTargetForAnchor:[sender representedObject] parentMenu:&parentMenu bundle:&bundle atIndex:&at pane:&pane])
+		return;
+	// insertionTargetForAnchor reports the slot below the anchor row.
+	if(at == 0 || at - 1 >= paneEntries[pane].size())
+		return;
+	size_t const index = at - 1;
+	bundles::item_ptr submenu = paneEntries[pane][index]->represented_item();
+	if(!submenu || submenu->kind() != bundles::kItemTypeMenu)
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: delete category refused, row %lu is not a category", (unsigned long)index);
+		return;
+	}
+	for(oak::uuid_t const& member : bundles::menu_members(submenu->uuid()))
+	{
+		if(bundles::lookup(member))
+		{
+			NSAlert* alert = [NSAlert tmAlertWithMessageText:@"Category Is Not Empty" informativeText:@"Please empty the category manually first." buttons:@"OK", nil];
+			[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse returnCode){ }];
+			return;
+		}
+	}
+
+	std::string const bundleStr = to_s(bundle->uuid()), menuStr = to_s(parentMenu), submenuStr = to_s(submenu->uuid());
+
+	auto base = changes.find(bundle);
+	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
+	if(!bundles::remove_submenu_from_main_menu(infoPlist, bundleStr, menuStr, submenuStr))
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: delete category failed for %{public}s", submenuStr.c_str());
+		return;
+	}
+	if(!plist::equal(infoPlist, bundle->plist()))
+		changes[bundle] = infoPlist;
+
+	// The submenu record was never a file: drop any staged property edits
+	// for it so a later save cannot resurrect the deleted category.
+	changes.erase(submenu);
+	{
+		bundles::notification_batch_t batch;
+		bundles::remove_from_menu(parentMenu, submenu->uuid());
+		bundles::remove_item(submenu);
+	}
+
+	// The removal notification rebuilt the panes synchronously: hold position.
+	NSTableView* tableView = paneTables[pane];
+	if(NSInteger rows = [tableView numberOfRows])
+		[tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:MIN((NSInteger)index, rows - 1)] byExtendingSelection:NO];
+	[self didChangeModifiedState];
+}
+
+// Start an in-place rename of the submenu at the anchor row. Return commits
+// through tableView:setObjectValue:… below; Escape cancels with no call, so
+// there is nothing to disarm.
+- (void)renameCategoryAtAnchor:(NSMenuItem*)sender
+{
+	oak::uuid_t parentMenu;
+	bundles::item_ptr bundle;
+	size_t at = 0;
+	NSInteger pane = -1;
+	if(![self insertionTargetForAnchor:[sender representedObject] parentMenu:&parentMenu bundle:&bundle atIndex:&at pane:&pane])
+		return;
+	// insertionTargetForAnchor reports the slot below the anchor row.
+	if(at == 0 || at - 1 >= paneEntries[pane].size())
+		return;
+	be::entry_ptr entry = paneEntries[pane][at - 1];
+	if(!entry->represented_item() || entry->represented_item()->kind() != bundles::kItemTypeMenu)
+		return;
+	[paneTables[pane] editColumn:0 row:(NSInteger)(at - 1) withEvent:nil select:YES];
+}
+
+// In-place editing is only ever offered for submenu rows, and only the
+// rename action above starts it: view-based tables do not edit on click.
+- (BOOL)tableView:(NSTableView*)tableView shouldEditTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row
+{
+	(void)tableColumn;
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	if(pane == -1 || row < 0 || row >= (NSInteger)paneEntries[pane].size())
+		return NO;
+	bundles::item_ptr item = paneEntries[pane][row]->represented_item();
+	return item && item->kind() == bundles::kItemTypeMenu;
+}
+
+- (void)tableView:(NSTableView*)tableView setObjectValue:(id)object forTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row
+{
+	(void)tableColumn;
+	NSInteger pane = [self columnIndexForTableView:tableView];
+	if(pane == -1 || row < 0 || row >= (NSInteger)paneEntries[pane].size())
+		return;
+	be::entry_ptr entry = paneEntries[pane][row];
+	bundles::item_ptr item = entry->represented_item();
+	if(!item || item->kind() != bundles::kItemTypeMenu || ![object isKindOfClass:[NSString class]])
+		return;
+
+	std::string newName = to_s((NSString*)object);
+	if(newName.find_first_not_of(" \t") == std::string::npos || newName == item->name())
+	{
+		// Blank or unchanged: revert the typed text, no model change.
+		[tableView reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row] columnIndexes:[NSIndexSet indexSetWithIndex:0]];
+		return;
+	}
+
+	bundles::item_ptr bundle = item->bundle();
+	if(!bundle)
+		return;
+	std::string const itemStr = to_s(item->uuid());
+
+	auto base = changes.find(bundle);
+	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
+	if(!bundles::add_submenu_to_main_menu(infoPlist, itemStr, newName))
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: rename category failed for %{public}s", itemStr.c_str());
+		return;
+	}
+	if(!plist::equal(infoPlist, bundle->plist()))
+		changes[bundle] = infoPlist;
+
+	bundles::rename_item(item->uuid(), newName);
 	[self didChangeModifiedState];
 }
 

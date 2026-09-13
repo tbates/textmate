@@ -167,6 +167,31 @@ bool bundles::remove_separator_from_main_menu_at_index (plist::dictionary_t& inf
 	return true;
 }
 
+bool bundles::remove_submenu_from_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& parent_menu_uuid, std::string const& submenu_uuid)
+{
+	if(!oak::uuid_t::is_valid(parent_menu_uuid) || !oak::uuid_t::is_valid(submenu_uuid))
+		return false;
+
+	// The record must exist: the loader drops nameless submenu records, so
+	// deleting a bare parent reference would lose nothing but also fix
+	// nothing — refuse instead. Removal never creates structure.
+	auto main_menu_it = info_plist.find("mainMenu");
+	plist::dictionary_t* main_menu = main_menu_it != info_plist.end() ? plist::get<plist::dictionary_t>(&main_menu_it->second) : nullptr;
+	if(!main_menu)
+		return false;
+	auto sub_menus_it = main_menu->find("submenus");
+	plist::dictionary_t* sub_menus = sub_menus_it != main_menu->end() ? plist::get<plist::dictionary_t>(&sub_menus_it->second) : nullptr;
+	if(!sub_menus || sub_menus->find(submenu_uuid) == sub_menus->end())
+		return false;
+
+	// Parent reference first: it fails cleanly (untouched) when the parent
+	// menu is missing, before the record goes away.
+	if(!remove_uuid_from_main_menu(info_plist, bundle_uuid, parent_menu_uuid, submenu_uuid))
+		return false;
+	sub_menus->erase(submenu_uuid);
+	return true;
+}
+
 bool bundles::add_submenu_to_main_menu (plist::dictionary_t& info_plist, std::string const& submenu_uuid, std::string const& name)
 {
 	if(!oak::uuid_t::is_valid(submenu_uuid))

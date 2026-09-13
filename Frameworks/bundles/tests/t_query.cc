@@ -648,3 +648,87 @@ void test_remove_separator_from_menu_at_index ()
 	// whatever runs after it in the suite.
 	setup_fixtures();
 }
+
+void test_rename_item_updates_name_lookup ()
+{
+	oak::uuid_t const bundleUUID = oak::uuid_t().generate();
+	oak::uuid_t const menuUUID   = oak::uuid_t().generate();
+
+	auto bundle = std::make_shared<bundles::item_t>(bundleUUID, bundles::item_ptr(), bundles::kItemTypeBundle);
+	auto menu   = std::make_shared<bundles::item_t>(menuUUID, bundle, bundles::kItemTypeMenu);
+	menu->set_name("Extras");
+	OAK_ASSERT(bundles::set_index(
+		std::vector<bundles::item_ptr>{ bundle, menu },
+		std::map<oak::uuid_t, std::vector<oak::uuid_t>>{ { bundleUUID, { menuUUID } } }
+	));
+
+	auto hits = bundles::query(bundles::kFieldName, "Extras");
+	OAK_ASSERT_EQ(hits.size(), 1);
+
+	bundles::rename_item(menuUUID, "Renamed");
+	OAK_ASSERT(bundles::query(bundles::kFieldName, "Extras").empty());
+	auto renamed = bundles::query(bundles::kFieldName, "Renamed");
+	OAK_ASSERT_EQ(renamed.size(), 1);
+	OAK_ASSERT(renamed[0]->uuid() == menuUUID);
+
+	// This test replaces the shared index: rebuild the standard fixtures for
+	// whatever runs after it in the suite.
+	setup_fixtures();
+}
+
+void test_menu_members ()
+{
+	oak::uuid_t const bundleUUID = oak::uuid_t().generate();
+	oak::uuid_t const menuUUID   = oak::uuid_t().generate();
+	oak::uuid_t const firstUUID  = oak::uuid_t().generate();
+	oak::uuid_t const secondUUID = oak::uuid_t().generate();
+
+	auto bundle = std::make_shared<bundles::item_t>(bundleUUID, bundles::item_ptr(), bundles::kItemTypeBundle);
+	auto menu   = std::make_shared<bundles::item_t>(menuUUID, bundle, bundles::kItemTypeMenu);
+	auto first  = std::make_shared<bundles::item_t>(firstUUID, bundle, bundles::kItemTypeSnippet);
+	auto second = std::make_shared<bundles::item_t>(secondUUID, bundle, bundles::kItemTypeSnippet);
+	OAK_ASSERT(bundles::set_index(
+		std::vector<bundles::item_ptr>{ bundle, menu, first, second },
+		std::map<oak::uuid_t, std::vector<oak::uuid_t>>{ { bundleUUID, { menuUUID } }, { menuUUID, { firstUUID, secondUUID } } }
+	));
+
+	auto members = bundles::menu_members(menuUUID);
+	OAK_ASSERT_EQ(members.size(), 2);
+	OAK_ASSERT(members[0] == firstUUID);
+	OAK_ASSERT(members[1] == secondUUID);
+	OAK_ASSERT(bundles::menu_members(oak::uuid_t()).empty());
+
+	// This test replaces the shared index: rebuild the standard fixtures for
+	// whatever runs after it in the suite.
+	setup_fixtures();
+}
+
+void test_remove_submenu_from_main_menu ()
+{
+	// Removal takes out the parent reference and the submenu record …
+	{
+		plist::dictionary_t info = make_info_plist();
+		OAK_ASSERT(bundles::insert_uuid_into_main_menu(info, BundleUUID, BundleUUID, MenuUUID));
+		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").size(), 3);
+
+		OAK_ASSERT(bundles::remove_submenu_from_main_menu(info, BundleUUID, BundleUUID, MenuUUID));
+		auto items = items_at(info, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 2);
+		OAK_ASSERT_EQ(items[0], FirstUUID);
+		OAK_ASSERT_EQ(items[1], SecondUUID);
+
+		std::string name;
+		OAK_ASSERT(!plist::get_key_path(info, "mainMenu.submenus." + MenuUUID + ".name", name));
+	}
+
+	// … and fails without touching the plist for unknown submenus, unknown
+	// parents, or malformed input.
+	{
+		plist::dictionary_t info = make_info_plist();
+		plist::dictionary_t const original = info;
+		OAK_ASSERT(!bundles::remove_submenu_from_main_menu(info, BundleUUID, BundleUUID, ThirdUUID));
+		OAK_ASSERT(!bundles::remove_submenu_from_main_menu(info, BundleUUID, ThirdUUID, MenuUUID));
+		OAK_ASSERT(!bundles::remove_submenu_from_main_menu(info, BundleUUID, BundleUUID, "not-a-uuid"));
+		OAK_ASSERT(plist::equal(info, original));
+	}
+}
