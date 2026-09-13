@@ -66,7 +66,7 @@
 - (void)setBackgroundStyle:(NSBackgroundStyle)backgroundStyle
 {
 	[super setBackgroundStyle:backgroundStyle];
-	if(backgroundStyle == NSBackgroundStyleDark)
+	if(backgroundStyle == NSBackgroundStyleEmphasized)
 	{
 		self.textField.objectValue       = [self selectedStringForString:[self valueForKeyPath:@"objectValue.name"]];
 		self.folderTextField.textColor   = [NSColor colorWithCalibratedWhite:0.9 alpha:1];
@@ -131,6 +131,14 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 
 static void* kFirstResponderObserverContext = &kFirstResponderObserverContext;
 
+static NSFont* OakChooserItemCountFont ()
+{
+	NSFontDescriptor* descriptor = [OakStatusBarFont().fontDescriptor fontDescriptorByAddingAttributes:@{
+		NSFontFeatureSettingsAttribute: @[ @{ NSFontFeatureTypeIdentifierKey: @(kNumberSpacingType), NSFontFeatureSelectorIdentifierKey: @(kMonospacedNumbersSelector) } ]
+	}];
+	return [NSFont fontWithDescriptor:descriptor size:0];
+}
+
 @implementation OakChooser
 - (id)init
 {
@@ -145,6 +153,7 @@ static void* kFirstResponderObserverContext = &kFirstResponderObserverContext;
 		self.window.delegate          = self;
 
 		[self.window addObserver:self forKeyPath:@"firstResponder" options:NSKeyValueObservingOptionOld|NSKeyValueObservingOptionNew context:kFirstResponderObserverContext];
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 	}
 	return self;
 }
@@ -154,6 +163,7 @@ static void* kFirstResponderObserverContext = &kFirstResponderObserverContext;
 	_searchField.delegate = nil;
 	[_searchField unbind:NSValueBinding];
 	[self.window removeObserver:self forKeyPath:@"firstResponder" context:kFirstResponderObserverContext];
+	[NSNotificationCenter.defaultCenter removeObserver:self];
 
 	_tableView.target     = nil;
 	_tableView.dataSource = nil;
@@ -259,6 +269,12 @@ static void* kFirstResponderObserverContext = &kFirstResponderObserverContext;
 	return _statusTextField;
 }
 
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	_statusTextField.font    = OakStatusBarFont();
+	_itemCountTextField.font = OakChooserItemCountFont();
+}
+
 - (NSTextField*)itemCountTextField
 {
 	if(!_itemCountTextField)
@@ -271,11 +287,7 @@ static void* kFirstResponderObserverContext = &kFirstResponderObserverContext;
 		_itemCountTextField.font            = OakStatusBarFont();
 		_itemCountTextField.selectable      = NO;
 		[_itemCountTextField setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
-
-		NSFontDescriptor* descriptor = [_itemCountTextField.font.fontDescriptor fontDescriptorByAddingAttributes:@{
-			NSFontFeatureSettingsAttribute: @[ @{ NSFontFeatureTypeIdentifierKey: @(kNumberSpacingType), NSFontFeatureSelectorIdentifierKey: @(kMonospacedNumbersSelector) } ]
-		}];
-		_itemCountTextField.font = [NSFont fontWithDescriptor:descriptor size:0];
+		_itemCountTextField.font = OakChooserItemCountFont();
 	}
 	return _itemCountTextField;
 }

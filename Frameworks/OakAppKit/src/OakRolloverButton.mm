@@ -1,4 +1,5 @@
 #import "OakRolloverButton.h"
+#import "OakUIConstructionFunctions.h"
 
 NSNotificationName const OakRolloverButtonMouseDidEnterNotification = @"OakRolloverButtonMouseDidEnterNotification";
 NSNotificationName const OakRolloverButtonMouseDidLeaveNotification = @"OakRolloverButtonMouseDidLeaveNotification";
@@ -34,8 +35,21 @@ typedef NS_ENUM(NSUInteger, OakImageState) {
 		[self setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
 		[self setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[self setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 	}
 	return self;
+}
+
+- (void)dealloc
+{
+	[NSNotificationCenter.defaultCenter removeObserver:self];
+}
+
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	[self updateImage];
+	[self invalidateIntrinsicContentSize];
 }
 
 - (BOOL)shouldDelayWindowOrderingForEvent:(NSEvent*)anEvent
@@ -101,8 +115,8 @@ typedef NS_ENUM(NSUInteger, OakImageState) {
 		altImage = _images[OakImageStateInactivePressed] ?: image;
 	}
 
-	self.image          = image;
-	self.alternateImage = altImage;
+	self.image          = OakScaledUIImage(image);
+	self.alternateImage = OakScaledUIImage(altImage);
 }
 
 - (void)viewWillMoveToWindow:(NSWindow*)newWindow

@@ -1,14 +1,12 @@
 #import "HOStatusBar.h"
+#import <OakAppKit/OakScaledImageButton.h>
 #import <OakAppKit/NSImage Additions.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
 
 static NSButton* OakCreateImageButton (NSImage* image)
 {
-	NSButton* res = [NSButton new];
-	[res setButtonType:NSButtonTypeMomentaryChange];
-	[res setBordered:NO];
-	[res setImage:image];
-	[res setImagePosition:NSImageOnly];
+	OakScaledImageButton* res = [OakScaledImageButton new];
+	res.baseImage = image;
 	return res;
 }
 
@@ -72,7 +70,6 @@ static NSTextField* OakCreateTextField ()
 		_progressIndicator.maxValue             = 1;
 		_progressIndicator.indeterminate        = NO;
 		_progressIndicator.displayedWhenStopped = NO;
-		_progressIndicator.bezeled              = NO;
 
 		_spinner = [NSProgressIndicator new];
 		_spinner.controlSize          = NSControlSizeSmall;
@@ -83,6 +80,8 @@ static NSTextField* OakCreateTextField ()
 		OakAddAutoLayoutViewsToSuperview(views, self);
 
 		[_progressIndicator setTranslatesAutoresizingMaskIntoConstraints:NO];
+
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 	}
 	return self;
 }
@@ -104,13 +103,15 @@ static NSTextField* OakCreateTextField ()
 		@"spinner":    _indeterminateProgress ? _spinner : _progressIndicator,
 	};
 
+	NSDictionary* metrics = @{ @"top": @(OakScaledUIMetric(4)), @"height": @(OakScaledUIMetric(15)), @"bottom": @(OakScaledUIMetric(5)), @"button": @(OakScaledUIMetric(22)) };
+
 	NSArray* layout = @[
-		@"H:|[topDivider]|", @"V:|[topDivider(==1)]-4-[divider(==15)]-5-|", @"V:[status]-5-|"
+		@"H:|[topDivider]|", @"V:|[topDivider(==1)]-(top)-[divider(==height)]-(bottom)-|", @"V:[status]-(bottom)-|"
 	];
 
 	for(NSString* str in layout)
-		[_layoutConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:str options:0 metrics:nil views:views]];
-	[_layoutConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(3)-[back(==22)]-(2)-[forward(==back)]-(2)-[divider(==1)]" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
+		[_layoutConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:str options:0 metrics:metrics views:views]];
+	[_layoutConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(3)-[back(==button)]-(2)-[forward(==back)]-(2)-[divider(==1)]" options:NSLayoutFormatAlignAllCenterY metrics:metrics views:views]];
 
 	if(!_indeterminateProgress)
 	{
@@ -124,6 +125,17 @@ static NSTextField* OakCreateTextField ()
 	}
 
 	[self addConstraints:_layoutConstraints];
+}
+
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	_statusTextField.font = OakStatusBarFont();
+	self.needsUpdateConstraints = YES;
+}
+
+- (void)dealloc
+{
+	[NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 - (void)setIndeterminateProgress:(BOOL)newIndeterminateProgress

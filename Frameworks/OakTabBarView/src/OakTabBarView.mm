@@ -78,7 +78,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 
 - (NSArray*)writableTypesForPasteboard:(NSPasteboard*)aPasteboard
 {
-	return OakIsEmptyString(_path) ? @[ OakTabItemPasteboardType ] : @[ OakTabItemPasteboardType, (NSString*)kUTTypeFileURL ];
+	return OakIsEmptyString(_path) ? @[ OakTabItemPasteboardType ] : @[ OakTabItemPasteboardType, NSPasteboardTypeFileURL ];
 }
 
 - (NSPasteboardWritingOptions)writingOptionsForType:(NSString*)aType pasteboard:(NSPasteboard*)aPasteboard
@@ -88,7 +88,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 
 - (id)pasteboardPropertyListForType:(NSString*)aType
 {
-	if([aType isEqualToString:(NSString*)kUTTypeFileURL])
+	if([aType isEqualToString:NSPasteboardTypeFileURL])
 		return [NSURL fileURLWithPath:_path].absoluteString;
 
 	NSMutableDictionary* dict = [NSMutableDictionary dictionary];
@@ -180,6 +180,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 @property (nonatomic) SEL dragAction;
 
 @property (nonatomic, getter = isSelected) BOOL selected;
+- (void)updateFont;
 @property (nonatomic, getter = isModified) BOOL modified;
 @property (nonatomic, getter = isOverflowButtonVisible) BOOL overflowButtonVisible;
 
@@ -257,6 +258,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		_leftBorderView = [[OakBox alloc] initWithFrame:NSZeroRect];
 
 		_textField = OakCreateLabel();
+		[self updateFont];
 
 		DisableImplicitAnimationForBlock(^{
 			_backgroundView.fillColor  = NSColor.textColor;
@@ -302,11 +304,11 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[overflow]|" options:0 metrics:nil views:views]];
 		// Centred rather than inset from the bottom. The old 4pt and 3pt insets
-		// only centre when the tab is the 22pt that intrinsicContentSize below
-		// implies, and the titlebar accessory renders it about half again as
-		// tall, which left both sitting well under the middle. centerY holds at
-		// whatever height AppKit gives us. The nudge sits them a point below
-		// dead centre, which is where they look right.
+		// only centre at the 22pt the view used to claim; the titlebar accessory
+		// rendered it at 33pt regardless, which left both sitting well under
+		// the middle. centerY holds at whatever the bar’s height is, including
+		// the scaled one. The nudge sits them a point below dead centre, which
+		// is where they look right.
 		CGFloat const baselineNudge = 1;
 		[self addConstraint:[NSLayoutConstraint constraintWithItem:self.closeButton attribute:NSLayoutAttributeCenterY relatedBy:NSLayoutRelationEqual toItem:self attribute:NSLayoutAttributeCenterY multiplier:1 constant:baselineNudge]];
 		[self addConstraint:[NSLayoutConstraint constraintWithItem:_textField attribute:NSLayoutAttributeCenterY relatedBy:NSLayoutRelationEqual toItem:self attribute:NSLayoutAttributeCenterY multiplier:1 constant:baselineNudge]];
@@ -322,6 +324,11 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		self.tabItem = tabItem;
 	}
 	return self;
+}
+
+- (void)updateFont
+{
+	_textField.font = OakScaledUIFont([NSFont systemFontOfSize:0]);
 }
 
 - (void)dealloc
@@ -718,13 +725,19 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		[self addSubview:self.createNewTabButton positioned:NSWindowAbove relativeTo:nil];
 
 		[self registerForDraggedTypes:@[ OakTabItemPasteboardType ]];
+
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 	}
 	return self;
 }
 
 - (NSSize)intrinsicContentSize
 {
-	return NSMakeSize(NSViewNoIntrinsicMetric, 23);
+	// 33 pt is the height the titlebar accessory has always rendered this
+	// view at (the old 23 was never honoured). DocumentWindowController sets
+	// the frame to this after the window is shown and whenever the UI font
+	// scale changes.
+	return NSMakeSize(NSViewNoIntrinsicMetric, OakScaledUIMetric(33));
 }
 
 - (BOOL)mouseDownCanMoveWindow
@@ -732,13 +745,29 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 	return NO;
 }
 
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	[_backgroundView updateFont];
+	for(OakTabItem* tabItem in _tabItems)
+		[tabItem.tabView updateFont];
+	_createNewTabButton.image     = OakScaledUIImage([NSImage imageNamed:NSImageNameAddTemplate]);
+	_createNewTabButton.frameSize = NSMakeSize(OakScaledUIMetric(26), OakScaledUIMetric(20));
+	[self invalidateIntrinsicContentSize];
+	[self updateToLayout:[self makeLayout]];
+}
+
+- (void)dealloc
+{
+	[NSNotificationCenter.defaultCenter removeObserver:self];
+}
+
 - (NSButton*)createNewTabButton
 {
 	if(!_createNewTabButton)
 	{
-		_createNewTabButton = [[NSButton alloc] initWithFrame:NSMakeRect(0, 2, 26, 20)];
+		_createNewTabButton = [[NSButton alloc] initWithFrame:NSMakeRect(0, 2, OakScaledUIMetric(26), OakScaledUIMetric(20))];
 		_createNewTabButton.accessibilityLabel = @"Create new tab";
-		_createNewTabButton.image      = [NSImage imageNamed:NSImageNameAddTemplate];
+		_createNewTabButton.image      = OakScaledUIImage([NSImage imageNamed:NSImageNameAddTemplate]);
 		_createNewTabButton.bordered   = NO;
 		_createNewTabButton.buttonType = NSButtonTypeMomentaryChange;
 		_createNewTabButton.toolTip    = @"Create new tab";

@@ -16,6 +16,7 @@
 #import <OakAppKit/OakPasteboard.h>
 #import <OakAppKit/OakTransitionViewController.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
+#import <OakAppKit/OakScaledContainerView.h>
 #import <MenuBuilder/MenuBuilder.h>
 #import <Preferences/Keys.h>
 #import <ns/ns.h>
@@ -215,7 +216,7 @@ static NSButton* OakCreateHistoryButton (NSString* toolTip)
 		[NSLayoutConstraint activateConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[options]|"                               options:0                                                            metrics:nil views:views]];
 		[NSLayoutConstraint activateConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[options]-[results]-[status]-[buttons]-|" options:NSLayoutFormatAlignAllLeading|NSLayoutFormatAlignAllTrailing metrics:nil views:views]];
 
-		window.contentView = contentView;
+		OakSetScaledWindowContentView(window, contentView);
 		window.initialFirstResponder = _findTextFieldViewController.view;
 		window.defaultButtonCell = _findNextButton.cell;
 

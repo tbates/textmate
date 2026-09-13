@@ -5,6 +5,7 @@
 #import <OakAppKit/OakUIConstructionFunctions.h>
 
 @interface FileBrowserView () <NSAccessibilityGroup>
+@property (nonatomic) CGFloat baseTopInset;
 @property (nonatomic) NSScrollView* scrollView;
 @end
 
@@ -64,14 +65,33 @@
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[header]-(>=0)-[actions]"     options:NSLayoutFormatAlignAllLeading metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[files][actions]|"            options:NSLayoutFormatAlignAllLeading metrics:nil views:views]];
 
-		NSEdgeInsets insets = _scrollView.contentInsets;
-		insets.top += _headerView.fittingSize.height;
+		_baseTopInset = _scrollView.contentInsets.top;
 		_scrollView.automaticallyAdjustsContentInsets = NO;
-		_scrollView.contentInsets = insets;
+		[self updateTopInset];
+
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 
 		_outlineView.backgroundColor = NSColor.controlBackgroundColor; // dynamic (adapts to Light/Dark)
 		_scrollView.drawsBackground  = YES; // ensure adaptive system color is actually drawn
 	}
 	return self;
+}
+
+- (void)dealloc
+{
+	[NSNotificationCenter.defaultCenter removeObserver:self];
+}
+
+// The header floats above the list, so the list is inset by the header’s height.
+- (void)updateTopInset
+{
+	NSEdgeInsets insets = _scrollView.contentInsets;
+	insets.top = _baseTopInset + _headerView.fittingSize.height;
+	_scrollView.contentInsets = insets;
+}
+
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	[self updateTopInset];
 }
 @end

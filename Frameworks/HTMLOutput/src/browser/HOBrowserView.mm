@@ -27,6 +27,7 @@ static NSString* EscapeHTML (NSString* str)
 	if(self = [super initWithFrame:frame])
 	{
 		[self setupWebView];
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 
 		_statusBar = [[HOStatusBar alloc] initWithFrame:NSZeroRect];
 		_statusBar.delegate = _webView;
@@ -79,6 +80,7 @@ static NSString* EscapeHTML (NSString* str)
 	_webView = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:config];
 	_webView.navigationDelegate = self;
 	_webView.UIDelegate = self;
+	_webView.pageZoom = OakUIFontScaleFactor();
 
 	_scriptMessageHandler.webView = _webView;
 }
@@ -88,8 +90,14 @@ static NSString* EscapeHTML (NSString* str)
 	return NO;
 }
 
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	_webView.pageZoom = OakUIFontScaleFactor();
+}
+
 - (void)dealloc
 {
+	[NSNotificationCenter.defaultCenter removeObserver:self];
 	[self setUpdatesProgress:NO];
 	_webView.navigationDelegate = nil;
 	_webView.UIDelegate = nil;

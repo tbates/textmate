@@ -13,6 +13,23 @@ typedef NS_ENUM(NSUInteger, OakBackgroundFillViewStyle) {
 @property (nonatomic) BOOL active;
 @end
 
+// User-adjustable scale applied to the fonts and metrics of the window
+// chrome (tab bar, status bars, file browser). Stored in user defaults;
+// 1 means the stock sizes. Views that size themselves from these read them
+// again when the notification fires.
+extern NSString* const kUserDefaultsUIFontScaleFactorKey;
+extern NSNotificationName const OakUIFontScaleFactorDidChangeNotification;
+extern CGFloat const kOakUIFontScaleFactorMin;
+extern CGFloat const kOakUIFontScaleFactorMax;
+extern CGFloat const kOakUIFontScaleFactorStep;
+
+CGFloat OakUIFontScaleFactor ();
+void OakSetUIFontScaleFactor (CGFloat scale);
+NSFont* OakScaledUIFont (NSFont* base);
+CGFloat OakScaledUIMetric (CGFloat metric);
+NSImage* OakScaledUIImage (NSImage* base); // a copy of base at base.size × scale; base (often a shared named image) is left alone
+CGFloat OakUIScaleThatFits (NSSize designSize, NSSize availableSize, CGFloat scale); // scale, reduced (never below 1) so designSize × result fits availableSize
+
 NSFont* OakStatusBarFont ();
 NSFont* OakControlFont ();
 

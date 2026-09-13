@@ -83,6 +83,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 {
 	NSMutableSet<NSUUID*>*                 _stickyDocumentIdentifiers;
 
+
 	scm::info_ptr                          _projectSCMInfo;
 	std::map<std::string, std::string>     _projectSCMVariables;
 	std::vector<std::string>               _projectScopeAttributes;  // kSettingsScopeAttributesKey
@@ -227,6 +228,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(applicationDidBecomeActiveNotification:) name:NSApplicationDidBecomeActiveNotification object:NSApp];
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(applicationDidResignActiveNotification:) name:NSApplicationDidResignActiveNotification object:NSApp];
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(fileBrowserWillDelete:) name:FileBrowserWillDeleteNotification object:nil];
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 
 		[self userDefaultsDidChange:nil];
 	}
@@ -339,6 +341,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		[self openAndSelectDocument:defaultDocument activate:YES];
 	}
 	[self.window makeKeyAndOrderFront:sender];
+	[self updateTabBarHeight];
 }
 
 - (void)makeTextViewFirstResponder:(id)sender { [self.window makeFirstResponder:self.textView]; }
@@ -387,6 +390,23 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 	BOOL disableTabBarCollapsingKey = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsDisableTabBarCollapsingKey];
 	self.titlebarViewController.hidden = !disableTabBarCollapsingKey && self.documents.count <= 1;
+}
+
+// The titlebar accessory ignores the view frame set before the window is
+// on screen (it renders 33 pt whatever we ask for), but honours frame
+// changes made afterwards. So the scaled height is applied once the window
+// is shown and again whenever the scale changes.
+- (void)updateTabBarHeight
+{
+	NSRect frame = self.tabBarView.frame;
+	frame.size.height = self.tabBarView.intrinsicContentSize.height;
+	self.tabBarView.frame = frame;
+	_titlebarViewController.fullScreenMinHeight = NSHeight(frame);
+}
+
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	[self updateTabBarHeight];
 }
 
 - (void)applicationDidBecomeActiveNotification:(NSNotification*)aNotification

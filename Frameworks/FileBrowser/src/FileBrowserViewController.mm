@@ -1,4 +1,5 @@
 #import "FileBrowserViewController.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "FileBrowserView.h"
 #import "FileBrowserOutlineView.h"
 #import "FileBrowserNotifications.h"
@@ -13,6 +14,7 @@
 #import <OakAppKit/NSMenuItem Additions.h>
 #import <OakAppKit/NSImage Additions.h>
 #import <OakAppKit/OakAppKit.h>
+#import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakAppKit/OakOpenWithMenu.h>
 #import <OakAppKit/OakFinderTag.h>
 #import <OakAppKit/OakZoomingIcon.h>
@@ -97,6 +99,8 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 	NSInteger _expandingChildrenCounter;
 	NSInteger _collapsingChildrenCounter;
 	NSInteger _nestedCollapsingChildrenCounter;
+
+	CGFloat _baseRowHeight;
 }
 @property (nonatomic) BOOL canExpandSymbolicLinks;
 @property (nonatomic) BOOL canExpandPackages;
@@ -160,6 +164,8 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 
 - (void)dealloc
 {
+	[NSNotificationCenter.defaultCenter removeObserver:self name:OakUIFontScaleFactorDidChangeNotification object:nil];
+
 	for(id observer in _fileItemObservers.allValues)
 		[FileItem removeObserver:observer];
 	_fileItemObservers = nil;
@@ -177,6 +183,11 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 
 		[NSNotificationCenter.defaultCenter removeObserver:self name:NSPopUpButtonWillPopUpNotification object:headerView.folderPopUpButton];
 	}
+}
+
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	_fileBrowserView.outlineView.rowHeight = OakScaledUIMetric(_baseRowHeight);
 }
 
 - (void)userDefaultsDidChange:(id)sender
@@ -208,6 +219,10 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 		outlineView.target       = self;
 		outlineView.action       = @selector(didSingleClickOutlineView:);
 		outlineView.doubleAction = @selector(didDoubleClickOutlineView:);
+
+		_baseRowHeight = outlineView.rowHeight;
+		outlineView.rowHeight = OakScaledUIMetric(_baseRowHeight);
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 
 		outlineView.menu = [[NSMenu alloc] init];
 		outlineView.menu.delegate = self;
@@ -1683,7 +1698,7 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 		if([url.scheme isEqualToString:@"scm"])
 		{
 			if([url.query hasSuffix:@"unstaged"] || [url.query hasSuffix:@"untracked"])
-					image = [NSWorkspace.sharedWorkspace iconForFileType:NSFileTypeForHFSTypeCode((OSType)kGenericFolderIcon)];
+					image = [NSWorkspace.sharedWorkspace iconForContentType:UTTypeFolder];
 			else	image = [NSImage imageNamed:@"SCMTemplate" inSameBundleAsClass:NSClassFromString(@"OakFileBrowser")];
 		}
 		else if([url.scheme isEqualToString:@"computer"])
@@ -1692,7 +1707,7 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 		}
 		else
 		{
-			image = [NSWorkspace.sharedWorkspace iconForFileType:NSFileTypeForHFSTypeCode((OSType)kGenericFolderIcon)];
+			image = [NSWorkspace.sharedWorkspace iconForContentType:UTTypeFolder];
 		}
 
 		image = [image copy];

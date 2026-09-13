@@ -59,6 +59,16 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 @property (nonatomic) NSPopUpButton* bundleItemsPopUp;
 @property (nonatomic) NSPopUpButton* symbolPopUp;
 @property (nonatomic) NSButton*      macroRecordingButton;
+@property (nonatomic) NSTextField*   lineLabel;
+@property (nonatomic) NSView* dividerOne;
+@property (nonatomic) NSView* dividerTwo;
+@property (nonatomic) NSView* dividerThree;
+@property (nonatomic) NSView* dividerFour;
+@property (nonatomic) NSView* dividerFive;
+@property (nonatomic) NSArray<NSLayoutConstraint*>* metricConstraints;
+@property (nonatomic) NSImage* recordMacroBaseImage;
+@property (nonatomic) NSImage* bundleItemsBaseImage;
+@property (nonatomic) NSView* wrappedBundleItemsPopUpButton;
 @end
 
 @implementation OTVStatusBar
@@ -83,14 +93,10 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		self.tabSizePopUp.pullsDown       = YES;
 		self.bundleItemsPopUp             = OakCreateStatusBarPopUpButton(nil, @"Bundle Item");
 		self.symbolPopUp                  = OakCreateStatusBarPopUpButton(@"", @"Symbol");
+		self.recordMacroBaseImage         = recordMacroImage;
 		self.macroRecordingButton         = OakCreateImageToggleButton(recordMacroImage, @"Record a macro");
 		self.macroRecordingButton.action  = @selector(toggleMacroRecording:);
 		self.macroRecordingButton.toolTip = @"Click to start recording a macro";
-
-		NSFontDescriptor* descriptor = [self.selectionField.font.fontDescriptor fontDescriptorByAddingAttributes:@{
-			NSFontFeatureSettingsAttribute: @[ @{ NSFontFeatureTypeIdentifierKey: @(kNumberSpacingType), NSFontFeatureSelectorIdentifierKey: @(kMonospacedNumbersSelector) } ]
-		}];
-		self.selectionField.font = [NSFont fontWithDescriptor:descriptor size:0];
 
 		[self setupTabSizeMenu:self];
 
@@ -99,22 +105,22 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		// ===========================
 
 		NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:@"" action:NULL keyEquivalent:@""];
-		item.image = [NSImage imageNamed:NSImageNameActionTemplate];
+		item.image = self.bundleItemsBaseImage = [NSImage imageNamed:NSImageNameActionTemplate];
 		[[self.bundleItemsPopUp cell] setUsesItemFromMenu:NO];
 		[[self.bundleItemsPopUp cell] setMenuItem:item];
 
-		NSView* wrappedBundleItemsPopUpButton = [NSView new];
+		NSView* wrappedBundleItemsPopUpButton = self.wrappedBundleItemsPopUpButton = [NSView new];
 		OakAddAutoLayoutViewsToSuperview(@[ self.bundleItemsPopUp ], wrappedBundleItemsPopUpButton);
 		[wrappedBundleItemsPopUpButton addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[popup]|" options:0 metrics:nil views:@{ @"popup": self.bundleItemsPopUp }]];
 		[wrappedBundleItemsPopUpButton addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[popup]|" options:0 metrics:nil views:@{ @"popup": self.bundleItemsPopUp }]];
 
 		NSView* topDivider   = OakCreateNSBoxSeparator();
-		NSTextField* line    = OakCreateTextField(@"Line:");
-		NSView* dividerOne   = OakCreateNSBoxSeparator();
-		NSView* dividerTwo   = OakCreateNSBoxSeparator();
-		NSView* dividerThree = OakCreateNSBoxSeparator();
-		NSView* dividerFour  = OakCreateNSBoxSeparator();
-		NSView* dividerFive  = OakCreateNSBoxSeparator();
+		NSTextField* line    = self.lineLabel = OakCreateTextField(@"Line:");
+		NSView* dividerOne   = self.dividerOne = OakCreateNSBoxSeparator();
+		NSView* dividerTwo   = self.dividerTwo = OakCreateNSBoxSeparator();
+		NSView* dividerThree = self.dividerThree = OakCreateNSBoxSeparator();
+		NSView* dividerFour  = self.dividerFour = OakCreateNSBoxSeparator();
+		NSView* dividerFive  = self.dividerFive = OakCreateNSBoxSeparator();
 
 		NSDictionary* views = @{
 			@"topDivider":   topDivider,
@@ -144,7 +150,6 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		[self.symbolPopUp setContentHuggingPriority:NSLayoutPriorityDefaultLow-1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[self.symbolPopUp setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow-1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[line]-[selection(>=50,<=225)]-8-[dividerOne(==1)]-2-[grammar(>=125@400,>=50,<=225)]-5-[dividerTwo(==1)]-2-[tabSize]-4-[dividerThree(==1)]-5-[items(==31)]-4-[dividerFour(==1)]-2-[symbol(>=125@450,>=50)]-5-[dividerFive(==1)]-6-[recording]-7-|" options:0 metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[topDivider]|" options:0 metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[topDivider(==1)]" options:0 metrics:nil views:views]];
 
@@ -153,13 +158,65 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 
 		// Center non-text control
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[selection]-(>=1)-[dividerOne]-(>=1)-[dividerTwo]-(>=1)-[dividerThree]-(>=1)-[items]-(>=1)-[dividerFour]-(>=1)-[dividerFive]-(>=1)-[recording]" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-5-[dividerOne(==15,==dividerTwo,==dividerThree,==dividerFour,==dividerFive)]-5-|" options:0 metrics:nil views:views]];
+		[self updateFonts];
+		[self updateMetricConstraints];
 
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(grammarPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:self.grammarPopUp];
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(bundleItemsPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:self.bundleItemsPopUp];
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(symbolPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:self.symbolPopUp];
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 	}
 	return self;
+}
+
+- (void)updateFonts
+{
+	NSFont* font = OakStatusBarFont();
+	for(NSControl* control in @[ self.lineLabel, self.grammarPopUp, self.tabSizePopUp, self.bundleItemsPopUp, self.symbolPopUp ])
+		control.font = font;
+
+	NSFontDescriptor* descriptor = [font.fontDescriptor fontDescriptorByAddingAttributes:@{
+		NSFontFeatureSettingsAttribute: @[ @{ NSFontFeatureTypeIdentifierKey: @(kNumberSpacingType), NSFontFeatureSelectorIdentifierKey: @(kMonospacedNumbersSelector) } ]
+	}];
+	self.selectionField.font = [NSFont fontWithDescriptor:descriptor size:0];
+
+	self.macroRecordingButton.image = OakScaledUIImage(_recordMacroBaseImage);
+	[[self.bundleItemsPopUp cell] menuItem].image = OakScaledUIImage(_bundleItemsBaseImage);
+}
+
+// The dividers set the bar's height: 15 pt tall with 5 pt above and below
+// at the stock scale.
+- (void)updateMetricConstraints
+{
+	if(_metricConstraints)
+		[self removeConstraints:_metricConstraints];
+
+	NSDictionary* metrics = @{ @"margin": @(OakScaledUIMetric(5)), @"height": @(OakScaledUIMetric(15)), @"items": @(OakScaledUIMetric(31)) };
+	NSDictionary* views = @{
+		@"line":         _lineLabel,
+		@"selection":    _selectionField,
+		@"dividerOne":   _dividerOne,
+		@"grammar":      _grammarPopUp,
+		@"dividerTwo":   _dividerTwo,
+		@"tabSize":      _tabSizePopUp,
+		@"dividerThree": _dividerThree,
+		@"items":        _wrappedBundleItemsPopUpButton,
+		@"dividerFour":  _dividerFour,
+		@"symbol":       _symbolPopUp,
+		@"dividerFive":  _dividerFive,
+		@"recording":    _macroRecordingButton,
+	};
+	NSMutableArray* constraints = [NSMutableArray array];
+	[constraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[line]-[selection(>=50,<=225)]-8-[dividerOne(==1)]-2-[grammar(>=125@400,>=50,<=225)]-5-[dividerTwo(==1)]-2-[tabSize]-4-[dividerThree(==1)]-5-[items(==items)]-4-[dividerFour(==1)]-2-[symbol(>=125@450,>=50)]-5-[dividerFive(==1)]-6-[recording]-7-|" options:0 metrics:metrics views:views]];
+	[constraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-(margin)-[dividerOne(==height,==dividerTwo,==dividerThree,==dividerFour,==dividerFive)]-(margin)-|" options:0 metrics:metrics views:views]];
+	_metricConstraints = constraints;
+	[self addConstraints:_metricConstraints];
+}
+
+- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
+{
+	[self updateFonts];
+	[self updateMetricConstraints];
 }
 
 - (void)setupTabSizeMenu:(id)sender

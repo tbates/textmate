@@ -13,6 +13,7 @@
 #import <OakAppKit/NSAlert Additions.h>
 #import <OakAppKit/NSMenuItem Additions.h>
 #import <OakAppKit/OakAppKit.h>
+#import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakAppKit/OakPasteboard.h>
 #import <OakFilterList/BundleItemChooser.h>
 #import <OakFoundation/OakFoundation.h>
@@ -235,6 +236,10 @@ BOOL HasDocumentWindow (NSArray* windows)
 						{ @"Bigger",       @selector(makeTextLarger:),       @"+" },
 						{ @"Smaller",      @selector(makeTextSmaller:),      @"-" },
 						{ @"Default Size", @selector(makeTextStandardSize:), @"0" },
+						{ /* -------- */ },
+						{ @"Bigger Interface",       @selector(makeUIFontLarger:),       @"=", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagControl },
+						{ @"Smaller Interface",      @selector(makeUIFontSmaller:),      @"-", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagControl },
+						{ @"Default Interface Size", @selector(makeUIFontStandardSize:), @"0", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagControl },
 					}
 				},
 				{ @"Show File Browser",      @selector(toggleFileBrowser:),    @"d", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
@@ -752,6 +757,25 @@ BOOL HasDocumentWindow (NSArray* windows)
 - (IBAction)toggleFindOption:(id)sender
 {
 	[Find.sharedInstance takeFindOptionToToggleFrom:sender];
+}
+
+// ===================================
+// = Interface font size (issue #63) =
+// ===================================
+
+- (IBAction)makeUIFontLarger:(id)sender
+{
+	OakSetUIFontScaleFactor(OakUIFontScaleFactor() + kOakUIFontScaleFactorStep);
+}
+
+- (IBAction)makeUIFontSmaller:(id)sender
+{
+	OakSetUIFontScaleFactor(OakUIFontScaleFactor() - kOakUIFontScaleFactorStep);
+}
+
+- (IBAction)makeUIFontStandardSize:(id)sender
+{
+	OakSetUIFontScaleFactor(1);
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem*)item

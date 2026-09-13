@@ -2,9 +2,80 @@
 #import "NSColor Additions.h"
 #import "NSImage Additions.h"
 
+NSString* const kUserDefaultsUIFontScaleFactorKey             = @"uiFontScaleFactor";
+NSNotificationName const OakUIFontScaleFactorDidChangeNotification = @"OakUIFontScaleFactorDidChangeNotification";
+CGFloat const kOakUIFontScaleFactorMin  = 0.8; // below this the file browser row (24 pt) drops under its 16 pt icon and autolayout throws
+CGFloat const kOakUIFontScaleFactorMax  = 3.0;
+CGFloat const kOakUIFontScaleFactorStep = 0.1;
+
+static CGFloat OakClampUIFontScaleFactor (CGFloat scale)
+{
+	return std::clamp(scale, kOakUIFontScaleFactorMin, kOakUIFontScaleFactorMax);
+}
+
+CGFloat OakUIFontScaleFactor ()
+{
+	id value = [NSUserDefaults.standardUserDefaults objectForKey:kUserDefaultsUIFontScaleFactorKey];
+	if(![value isKindOfClass:[NSNumber class]] || [value doubleValue] <= 0)
+		return 1;
+	return OakClampUIFontScaleFactor([value doubleValue]);
+}
+
+void OakSetUIFontScaleFactor (CGFloat scale)
+{
+	scale = round(OakClampUIFontScaleFactor(scale) * 100) / 100; // keep repeated ±0.1 steps on exact values
+	if(scale == OakUIFontScaleFactor())
+		return;
+
+	if(scale == 1)
+			[NSUserDefaults.standardUserDefaults removeObjectForKey:kUserDefaultsUIFontScaleFactorKey];
+	else	[NSUserDefaults.standardUserDefaults setDouble:scale forKey:kUserDefaultsUIFontScaleFactorKey];
+	[NSNotificationCenter.defaultCenter postNotificationName:OakUIFontScaleFactorDidChangeNotification object:nil];
+}
+
+NSFont* OakScaledUIFont (NSFont* base)
+{
+	return [NSFont fontWithDescriptor:base.fontDescriptor size:base.pointSize * OakUIFontScaleFactor()];
+}
+
+CGFloat OakScaledUIMetric (CGFloat metric)
+{
+	return round(metric * OakUIFontScaleFactor());
+}
+
+// Draws base into a fresh image rather than copying it and changing the
+// size: the symbol-backed system images (NSImageNameAddTemplate and
+// friends) keep rendering at their own point size when only `size` changes.
+NSImage* OakScaledUIImage (NSImage* base)
+{
+	if(!base)
+		return nil;
+	CGFloat scale = OakUIFontScaleFactor();
+	NSSize size = NSMakeSize(base.size.width * scale, base.size.height * scale);
+	NSImage* res = [NSImage imageWithSize:size flipped:NO drawingHandler:^BOOL(NSRect dstRect){
+		[base drawInRect:dstRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+		return YES;
+	}];
+	[res setTemplate:base.isTemplate];
+	res.accessibilityDescription = base.accessibilityDescription;
+	return res;
+}
+
+CGFloat OakUIScaleThatFits (NSSize designSize, NSSize availableSize, CGFloat scale)
+{
+	if(scale <= 1)
+		return scale;
+	if(designSize.width > 0)
+		scale = std::min(scale, availableSize.width / designSize.width);
+	if(designSize.height > 0)
+		scale = std::min(scale, availableSize.height / designSize.height);
+	return std::max<CGFloat>(scale, 1);
+}
+
 NSFont* OakStatusBarFont ()
 {
-	return [NSFont messageFontOfSize:[NSUserDefaults.standardUserDefaults integerForKey:@"statusBarFontSize"] ?: 12];
+	CGFloat size = [NSUserDefaults.standardUserDefaults integerForKey:@"statusBarFontSize"] ?: 12;
+	return [NSFont messageFontOfSize:size * OakUIFontScaleFactor()];
 }
 
 NSFont* OakControlFont ()
