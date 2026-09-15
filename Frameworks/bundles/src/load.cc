@@ -4,7 +4,7 @@
 #include <text/format.h>
 #include <oak/debug.h>
 
-static std::string const kSeparatorString = "------------------------------------";
+std::string const kSeparatorString = "------------------------------------";
 
 static std::vector<oak::uuid_t> to_menu (plist::array_t const& uuids, std::string const& path)
 {
@@ -100,6 +100,9 @@ bool bundles::insert_uuid_into_main_menu_at_index (plist::dictionary_t& info_pli
 
 bool bundles::insert_uuid_into_main_menu (plist::dictionary_t& info_plist, std::string const& bundle_uuid, std::string const& menu_uuid, std::string const& item_uuid, std::string const& after_uuid)
 {
+	if(!oak::uuid_t::is_valid(menu_uuid) || !oak::uuid_t::is_valid(item_uuid))
+		return false;
+
 	plist::array_t* items = main_menu_items(info_plist, bundle_uuid, menu_uuid, true);
 	if(!items)
 		return false;

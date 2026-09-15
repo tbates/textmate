@@ -6,6 +6,9 @@
 
 std::pair<std::vector<bundles::item_ptr>, std::map< oak::uuid_t, std::vector<oak::uuid_t>>> create_bundle_index (std::vector<std::string> const& bundlesPaths, plist::cache_t& cache);
 
+// Divider token stored in mainMenu items arrays (as opposed to a uuid).
+extern std::string const kSeparatorString;
+
 namespace bundles
 {
 // Insert item_uuid into the “items” array of the menu addressed by menu_uuid

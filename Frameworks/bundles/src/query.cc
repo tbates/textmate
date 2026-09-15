@@ -1,4 +1,5 @@
 #include "query.h"
+#include "load.h"
 #include <algorithm>
 #include <text/ctype.h>
 #include <text/parse.h>
@@ -293,6 +294,41 @@ namespace bundles
 		if(auto menu = AllMenus.find(menu_uuid); menu != AllMenus.end())
 			return menu->second;
 		return std::vector<oak::uuid_t>();
+	}
+
+	std::pair<size_t, size_t> menu_indexes_for_pane_slot (std::vector<std::string> const& entries, size_t slot, std::set<std::string> const& dragged)
+	{
+		size_t plistIndex = 0, membersIndex = 0, drawn = 0;
+		for(size_t p = 0; p < entries.size(); ++p)
+		{
+			std::string const& entry = entries[p];
+			if(dragged.find(entry) != dragged.end())
+				continue;
+			if(entry == kSeparatorString)
+			{
+				if(drawn == slot)
+					break;
+				++drawn;
+				++membersIndex;
+			}
+			else if(oak::uuid_t::is_valid(entry))
+			{
+				// Drawn state first: stopping at an entry must not count
+				// it, or slot 0 resolves one past the anchor.
+				bool draws = false;
+				if(item_ptr item = lookup(oak::uuid_t(entry)))
+					draws = !is_deleted(item) && !is_disabled(item) && !item->hidden_from_user();
+				if(draws && drawn == slot)
+					break;
+				if(draws)
+					++drawn;
+				++membersIndex;
+			}
+			// Strings the loader’s to_menu() drops (not valid uuids) hold
+			// their plist slot but never reach the membership list.
+			++plistIndex;
+		}
+		return std::make_pair(plistIndex, membersIndex);
 	}
 
 	void rename_item (oak::uuid_t const& item_uuid, std::string const& new_name)

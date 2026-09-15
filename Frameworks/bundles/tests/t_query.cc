@@ -343,6 +343,12 @@ void test_insert_uuid_into_main_menu ()
 		plist::dictionary_t bare;
 		OAK_ASSERT(!bundles::remove_uuid_from_main_menu(bare, BundleUUID, BundleUUID, ThirdUUID));
 		OAK_ASSERT(bare.empty());
+
+		// A rejected insert validates before materialising: no mainMenu
+		// structure is left behind on a bundle that had none.
+		plist::dictionary_t rejected;
+		OAK_ASSERT(!bundles::insert_uuid_into_main_menu(rejected, BundleUUID, BundleUUID, "not-a-uuid"));
+		OAK_ASSERT(rejected.empty());
 	}
 }
 
@@ -449,8 +455,12 @@ void test_submenu_and_separator_main_menu ()
 		OAK_ASSERT_EQ(items.size(), 3);
 		OAK_ASSERT_EQ(items[1], "------------------------------------");
 
+		// Clamped to the end, and — like the block below — never collapsed:
+		// the divider already there survives, so this appends a second one.
 		OAK_ASSERT(bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, BundleUUID, 99));
-		OAK_ASSERT_EQ(items_at(info, "mainMenu.items").size(), 3);
+		items = items_at(info, "mainMenu.items");
+		OAK_ASSERT_EQ(items.size(), 4);
+		OAK_ASSERT_EQ(items[1], items[3]);
 
 		OAK_ASSERT(bundles::insert_separator_into_main_menu_at_index(info, BundleUUID, MenuUUID, 0));
 		items = items_at(info, "mainMenu.submenus." + MenuUUID + ".items");
@@ -652,24 +662,26 @@ void test_remove_separator_from_menu_at_index ()
 void test_rename_item_updates_name_lookup ()
 {
 	oak::uuid_t const bundleUUID = oak::uuid_t().generate();
-	oak::uuid_t const menuUUID   = oak::uuid_t().generate();
+	oak::uuid_t const itemUUID   = oak::uuid_t().generate();
 
 	auto bundle = std::make_shared<bundles::item_t>(bundleUUID, bundles::item_ptr(), bundles::kItemTypeBundle);
-	auto menu   = std::make_shared<bundles::item_t>(menuUUID, bundle, bundles::kItemTypeMenu);
-	menu->set_name("Extras");
+	auto item   = std::make_shared<bundles::item_t>(itemUUID, bundle, bundles::kItemTypeSnippet);
+	item->set_name("Extras");
 	OAK_ASSERT(bundles::set_index(
-		std::vector<bundles::item_ptr>{ bundle, menu },
-		std::map<oak::uuid_t, std::vector<oak::uuid_t>>{ { bundleUUID, { menuUUID } } }
+		std::vector<bundles::item_ptr>{ bundle, item },
+		std::map<oak::uuid_t, std::vector<oak::uuid_t>>{ { bundleUUID, { itemUUID } } }
 	));
 
+	// Snippets are covered by the default query kind; menus are not, so a
+	// menu would never surface through this lookup.
 	auto hits = bundles::query(bundles::kFieldName, "Extras");
 	OAK_ASSERT_EQ(hits.size(), 1);
 
-	bundles::rename_item(menuUUID, "Renamed");
+	bundles::rename_item(itemUUID, "Renamed");
 	OAK_ASSERT(bundles::query(bundles::kFieldName, "Extras").empty());
 	auto renamed = bundles::query(bundles::kFieldName, "Renamed");
 	OAK_ASSERT_EQ(renamed.size(), 1);
-	OAK_ASSERT(renamed[0]->uuid() == menuUUID);
+	OAK_ASSERT(renamed[0]->uuid() == itemUUID);
 
 	// This test replaces the shared index: rebuild the standard fixtures for
 	// whatever runs after it in the suite.
@@ -731,4 +743,43 @@ void test_remove_submenu_from_main_menu ()
 		OAK_ASSERT(!bundles::remove_submenu_from_main_menu(info, BundleUUID, BundleUUID, "not-a-uuid"));
 		OAK_ASSERT(plist::equal(info, original));
 	}
+}
+
+void test_menu_index_for_pane_slot ()
+{
+	oak::uuid_t const bundleUUID = oak::uuid_t().generate();
+	oak::uuid_t const firstUUID  = oak::uuid_t().generate();
+	oak::uuid_t const secondUUID = oak::uuid_t().generate();
+	oak::uuid_t const orphanUUID = oak::uuid_t().generate();
+
+	auto bundle = std::make_shared<bundles::item_t>(bundleUUID, bundles::item_ptr(), bundles::kItemTypeBundle);
+	auto first  = std::make_shared<bundles::item_t>(firstUUID, bundle, bundles::kItemTypeSnippet);
+	auto second = std::make_shared<bundles::item_t>(secondUUID, bundle, bundles::kItemTypeSnippet);
+	// The membership list mirrors a loaded menu: the orphan uuid is kept
+	// (the loader only drops invalid strings), the divider token arrives
+	// as the shared separator uuid.
+	OAK_ASSERT(bundles::set_index(
+		std::vector<bundles::item_ptr>{ bundle, first, second },
+		std::map<oak::uuid_t, std::vector<oak::uuid_t>>{ { bundleUUID, { firstUUID, orphanUUID, bundles::kSeparatorUUID, secondUUID } } }
+	));
+
+	// Visible rows are first | divider | second: the orphan uuid and the
+	// invalid string draw nothing but keep their slots. The pair is {plist
+	// index, membership index}: the invalid string never reaches the latter.
+	std::string const orphan = to_s(orphanUUID);
+	std::vector<std::string> const entries{ to_s(firstUUID), orphan, kSeparatorString, "", to_s(secondUUID) };
+	auto at = [&](size_t slot, std::set<std::string> const& dragged = std::set<std::string>()){
+		return bundles::menu_indexes_for_pane_slot(entries, slot, dragged);
+	};
+	OAK_ASSERT(at(0) == std::make_pair(0ul, 0ul));
+	OAK_ASSERT(at(1) == std::make_pair(2ul, 2ul));
+	OAK_ASSERT(at(2) == std::make_pair(4ul, 3ul));
+	OAK_ASSERT(at(3) == std::make_pair(5ul, 4ul));
+	OAK_ASSERT(at(9) == std::make_pair(5ul, 4ul));
+	OAK_ASSERT(at(0, { to_s(firstUUID) }) == std::make_pair(1ul, 1ul));
+	OAK_ASSERT(at(1, { to_s(firstUUID) }) == std::make_pair(3ul, 2ul));
+
+	// This test replaces the shared index: rebuild the standard fixtures for
+	// whatever runs after it in the suite.
+	setup_fixtures();
 }

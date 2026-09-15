@@ -2,6 +2,10 @@
 #define BUNDLES_QUERY_H_7L9NPR0I
 
 #include "item.h"
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace bundles
 {
@@ -65,6 +69,16 @@ namespace bundles
 // items leave ghosts — callers judging emptiness should resolve each member
 // via lookup(), mirroring how the loader skips unresolvable entries.
 	std::vector<oak::uuid_t> menu_members (oak::uuid_t const& menu_uuid);
+
+// Translate a visible pane slot into {plist index, membership index} for
+// the menu’s items array. Panes skip entries they cannot draw — unknown,
+// deleted, or hidden uuids — so a raw row number lands high whenever such
+// entries sit above the slot; walking the array and counting only drawable,
+// non-dragged entries keeps drops and inserts where pointed. Skipped
+// entries keep their positions: visible moves never shuffle them. Slots
+// past the last drawable row append. Coordinates are post-removal: pass
+// the uuids moving away in dragged.
+	std::pair<size_t, size_t> menu_indexes_for_pane_slot (std::vector<std::string> const& entries, size_t slot, std::set<std::string> const& dragged);
 
 // Change the item’s name, invalidating name lookups. In-memory index only;
 // persist submenu renames with add_submenu_to_main_menu().
