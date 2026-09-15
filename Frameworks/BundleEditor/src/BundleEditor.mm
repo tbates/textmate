@@ -23,6 +23,7 @@
 #import <io/environment.h>
 #import <settings/settings.h>
 #import <oak/debug.h>
+#include <set>
 
 @class OakCommand;
 
@@ -32,7 +33,7 @@
 @property (nonatomic, weak) BundleEditor* editor;
 @end
 
-@interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate, NSMenuDelegate>
+@interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate, NSMenuDelegate, NSTextFieldDelegate>
 {
 	NSViewController*      _browserViewController;
 	NSViewController*      _documentViewController;
@@ -62,7 +63,6 @@
 	// rebuild is pending; the drop (or the session end) flushes it.
 	BOOL draggingActive;
 	BOOL rebuildPending;
-	NSDragOperation lastDropValidation;
 
 	bundles::item_ptr bundleItem;
 	OakDocument* bundleItemContent;
@@ -74,9 +74,9 @@
 - (NSArray*)addInsertItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
 - (void)addContextItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView;
 - (BOOL)paneTableViewDidPressRightArrow:(NSTableView*)tableView;
+- (BOOL)paneTableViewDidPressLeftArrow:(NSTableView*)tableView;
 - (void)deleteDividerAtAnchor:(NSMenuItem*)sender;
 - (void)deleteCategoryAtAnchor:(NSMenuItem*)sender;
-- (void)paneTableViewDraggingSessionDidEnd:(BEPaneTableView*)tableView;
 - (void)flushPendingRebuild;
 - (NSMenu*)contextMenuForTableView:(NSTableView*)tableView row:(NSInteger)row;
 - (void)renameCategoryAtAnchor:(NSMenuItem*)sender;
@@ -102,25 +102,27 @@
 @implementation BEPaneTableView
 - (void)keyDown:(NSEvent*)event
 {
-	if(event.keyCode == 124 /* right arrow */ && (event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask) == 0)
+	// Only real modifiers disqualify: the device-independent mask also
+	// carries hardware bits (Function, NumericPad) that arrows may arrive
+	// with, and those must not swallow the press.
+	static NSEventModifierFlags const kRealModifiers = NSEventModifierFlagCapsLock
+		| NSEventModifierFlagShift | NSEventModifierFlagControl
+		| NSEventModifierFlagOption | NSEventModifierFlagCommand;
+	if((event.keyCode == 124 /* right arrow */ || event.keyCode == 123 /* left arrow */) && (event.modifierFlags & kRealModifiers) == 0)
 	{
-		if([self.editor paneTableViewDidPressRightArrow:self])
+		BOOL const handled = event.keyCode == 124
+			? [self.editor paneTableViewDidPressRightArrow:self]
+			: [self.editor paneTableViewDidPressLeftArrow:self];
+		if(handled)
 			return;
 	}
 	[super keyDown:event];
 }
 
-// NSDraggingSource callback: the session ending (drop, drag-out, or cancel)
-// re-opens the rebuilds deferred while it was active.
-- (void)draggingSession:(NSDraggingSession*)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation
-{
-	[self.editor paneTableViewDraggingSessionDidEnd:self];
-}
-
 // Synchronous menu lookup: builds the clicked row’s menu on the spot, so
 // right-click never depends on open-time callbacks or hit-testing reaching
-// a particular subview. Falls through to the table menu (menuWillOpen:)
-// when the click lands outside any row.
+// a particular subview. Falls through to default handling when the click
+// lands outside any row.
 - (NSMenu*)menuForEvent:(NSEvent*)event
 {
 	if(BundleEditor* editor = self.editor)
@@ -261,7 +263,6 @@ static NSString* const kBundleItemUUIDsPboardType = @"com.textmate.BundleItemUUI
 		self.windowSplitViewController.splitView.autosaveName = @"Bundle Editor Properties";
 
 		bundles = be::bundle_entries();
-		lastDropValidation = NSDragOperationEvery;
 		[self resetPanes];
 
 		// Pre-draw the child panes: browserViewController above ran while
@@ -326,12 +327,6 @@ static CGFloat const kPaneWidth = 190;
 	tableView.allowsEmptySelection = YES;
 	[tableView registerForDraggedTypes:@[ kBundleItemUUIDsPboardType ]];
 	[tableView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
-
-	// Table-level right-click menu, filled from the clicked row in
-	// menuWillOpen: (per-cell menus alone do not reliably appear).
-	NSMenu* contextMenu = [NSMenu new];
-	contextMenu.delegate = self;
-	tableView.menu = contextMenu;
 
 	scrollView.documentView = tableView;
 	[columnsView addArrangedSubview:scrollView];
@@ -1035,18 +1030,12 @@ static CGFloat const kPaneWidth = 190;
 			cell.imageView.image = [TMFileReference imageForURL:[NSURL fileURLWithPath:[NSFileManager.defaultManager stringWithFileSystemRepresentation:path.data() length:path.size()]] size:NSMakeSize(16, 16)];
 	}
 
-	// The pane also owns an identical table-level menu (see menuWillOpen:):
-	// per-cell menus depend on hit-testing reaching the cell view, which
-	// right-clicks do not reliably do on every row.
-	NSMenu* menu = [NSMenu new];
-	[self addContextItemsToMenu:menu forEntry:entry inTableView:tableView];
-	cell.menu = menu;
 	return cell;
 }
 
-// Right-click content for one entry, shared by the cell menu and the
-// table-level menu. Group rows (no item, no path) intentionally get an empty
-// menu — there is nothing to export, reveal, or insert below.
+// Right-click content for one entry, built on the spot by menuForEvent:.
+// Group rows (no item, no path) intentionally get an empty menu — there is
+// nothing to export, reveal, or insert below.
 - (void)addContextItemsToMenu:(NSMenu*)menu forEntry:(be::entry_ptr const&)entry inTableView:(NSTableView*)tableView
 {
 	if(bundles::item_ptr item = entry->represented_item())
@@ -1125,33 +1114,9 @@ static CGFloat const kPaneWidth = 190;
 	}
 }
 
-// Table-level right-click menu: rebuilt from the clicked row on every open,
-// so the anchor always matches the row under the cursor even when the
-// right-click also moved the selection (which rebuilds the panes).
-- (void)menuWillOpen:(NSMenu*)menu
-{
-	NSTableView* tableView = nil;
-	for(NSTableView* paneTableView in paneTables)
-	{
-		if(paneTableView.menu == menu)
-		{
-			tableView = paneTableView;
-			break;
-		}
-	}
-	if(!tableView)
-		return;
-	NSInteger pane = [self columnIndexForTableView:tableView];
-	NSInteger row = [tableView clickedRow];
-	if(pane == -1 || row < 0 || row >= (NSInteger)paneEntries[pane].size())
-		return;
-	[menu removeAllItems];
-	[self addContextItemsToMenu:menu forEntry:paneEntries[pane][row] inTableView:tableView];
-}
-
 // Builds (but does not show) the right-click menu for one row: nil when the
-// row is invalid or intentionally menu-less (kind groups), so callers fall
-// through to default handling. Shared by menuForEvent: and menuWillOpen:.
+// row is invalid or intentionally menu-less (kind groups), so menuForEvent:
+// falls through to default handling.
 - (NSMenu*)contextMenuForTableView:(NSTableView*)tableView row:(NSInteger)row
 {
 	NSInteger pane = [self columnIndexForTableView:tableView];
@@ -1162,9 +1127,34 @@ static CGFloat const kPaneWidth = 190;
 	return [menu numberOfItems] == 0 ? nil : menu;
 }
 
+// Raw uuid strings of the target menu’s items array in plist order, for
+// pane-slot translation below. Non-strings cannot occur; they are kept as
+// empty so the loader’s to_menu() treatment (dropped from memberships,
+// holding a plist slot) matches.
+static std::vector<std::string> menuEntryStrings (plist::dictionary_t const& infoPlist, std::string const& bundleStr, std::string const& menuStr)
+{
+	std::vector<std::string> res;
+	plist::array_t items;
+	bool const found = menuStr == bundleStr
+		? plist::get_key_path(infoPlist, "mainMenu.items", items)
+		: plist::get_key_path(infoPlist, "mainMenu.submenus." + menuStr + ".items", items);
+	if(!found)
+		return res;
+	for(auto const& entry : items)
+	{
+		if(std::string const* str = plist::get<std::string>(&entry))
+			res.push_back(*str);
+		else	res.push_back(std::string());
+	}
+	return res;
+}
+
 // Apply a validated drop: plist edits first (per item, so memory and disk
 // stay consistent even if a later item fails), then the in-memory index.
-// The caller computed index against the pre-drop listing.
+// The caller’s index is a visible pane slot; menus also hold entries no
+// pane draws (orphan/deleted/hidden uuids), so it is translated to menu
+// coordinates first — a raw row number lands high whenever undrawn entries
+// sit above the slot.
 - (BOOL)moveBundleItems:(NSArray*)uuidStrings toMenu:(oak::uuid_t const&)targetMenu atIndex:(size_t)index inBundle:(bundles::item_ptr const&)bundle
 {
 	if(!bundle || [uuidStrings count] == 0)
@@ -1186,7 +1176,12 @@ static CGFloat const kPaneWidth = 190;
 	auto base = changes.find(bundle);
 	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
 
-	size_t at = index;
+	std::set<std::string> dragged;
+	for(auto const& move : moves)
+		dragged.emplace(to_s(move.first));
+	std::pair<size_t, size_t> const converted = bundles::menu_indexes_for_pane_slot(
+		menuEntryStrings(infoPlist, to_s(bundle->uuid()), to_s(targetMenu)), index, dragged);
+	size_t const plistAt = converted.first, membersAt = converted.second;
 	{
 		// One notification for the whole drop: per-item dispatches would
 		// rebuild the panes on half-moved state between detach and insert.
@@ -1194,7 +1189,7 @@ static CGFloat const kPaneWidth = 190;
 		// Phase 1 — plist edits on the copy. Any insert failure discards the
 		// copy here, before the in-memory index is touched.
 		std::string const bundleStr = to_s(bundle->uuid()), newStr = to_s(targetMenu);
-		size_t insertAt = at;
+		size_t insertAt = plistAt;
 		for(auto const& move : moves)
 		{
 			// Removal is best-effort: items never explicitly listed (fresh
@@ -1213,7 +1208,7 @@ static CGFloat const kPaneWidth = 190;
 		// keeps its order instead of scattering.
 		for(auto const& move : moves)
 			bundles::remove_from_menu(move.second, move.first);
-		insertAt = at;
+		insertAt = membersAt;
 		for(auto const& move : moves)
 			bundles::add_to_menu_at_index(targetMenu, move.first, insertAt++);
 	}
@@ -1300,7 +1295,6 @@ static CGFloat const kPaneWidth = 190;
 	// A drag session is starting: background reloads must not rebuild the
 	// panes until it ends (see draggingActive).
 	draggingActive = YES;
-	lastDropValidation = NSDragOperationEvery;
 	[pboard declareTypes:@[ kBundleItemUUIDsPboardType ] owner:self];
 	[pboard setPropertyList:uuids forType:kBundleItemUUIDsPboardType];
 	return YES;
@@ -1317,9 +1311,15 @@ static CGFloat const kPaneWidth = 190;
 	}
 }
 
-- (void)paneTableViewDraggingSessionDidEnd:(BEPaneTableView*)tableView
+// Drag-source data-source callback (NSTableView is the source; no override):
+// the session ending (drop, drag-out, or cancel) re-opens the rebuilds
+// deferred while it was active.
+- (void)tableView:(NSTableView*)tableView draggingSession:(NSDraggingSession*)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation
 {
 	(void)tableView;
+	(void)session;
+	(void)screenPoint;
+	(void)operation;
 	draggingActive = NO;
 	[self flushPendingRebuild];
 }
@@ -1327,24 +1327,12 @@ static CGFloat const kPaneWidth = 190;
 // Drops land in two places: between last-pane rows (reorder within that
 // pane’s menu) or onto a menu row in any pane (append into it). Bundles,
 // kind groups, Other Actions, and Support files never accept.
-- (NSDragOperation)validatedDropResult:(NSDragOperation)result reason:(const char*)reason row:(NSInteger)row operation:(NSTableViewDropOperation)operation
-{
-	// Transition logging only: validateDrop runs on every mouse move during
-	// a hover, so only verdict changes are worth a Console line.
-	if(result != lastDropValidation)
-	{
-		lastDropValidation = result;
-		os_log_error(OS_LOG_DEFAULT, "BundleEditor: validateDrop %{public}s row %ld %{public}s (%{public}s)", result == NSDragOperationNone ? "none" : "move", (long)row, operation == NSTableViewDropOn ? "on" : "above", reason);
-	}
-	return result;
-}
-
 - (NSDragOperation)tableView:(NSTableView*)tableView validateDrop:(id<NSDraggingInfo>)info proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)operation
 {
 	NSInteger pane = [self columnIndexForTableView:tableView];
 	NSInteger lastPane = (NSInteger)[paneTables count] - 1;
 	if(pane == -1 || info.draggingSource != paneTables[lastPane])
-		return [self validatedDropResult:NSDragOperationNone reason:"source" row:row operation:operation];
+		return NSDragOperationNone;
 
 	// The payload names the bundle; every dragged item must live in it and
 	// the drop target must belong to it too.
@@ -1357,10 +1345,10 @@ static CGFloat const kPaneWidth = 190;
 	}
 	be::entry_ptr shownBundle = [self selectedEntryInPane:0];
 	if(!bundle || !shownBundle || shownBundle->represented_item() != bundle)
-		return [self validatedDropResult:NSDragOperationNone reason:"bundle" row:row operation:operation];
+		return NSDragOperationNone;
 	NSArray* uuids = [self draggedUUIDsFromPasteboard:info.draggingPasteboard inBundle:bundle];
 	if(!uuids)
-		return [self validatedDropResult:NSDragOperationNone reason:"payload" row:row operation:operation];
+		return NSDragOperationNone;
 
 	oak::uuid_t menu, paneMenu;
 	size_t index = 0;
@@ -1368,7 +1356,7 @@ static CGFloat const kPaneWidth = 190;
 	{
 		menu = [self menuContextForPane:pane];
 		if(!menu)
-			return [self validatedDropResult:NSDragOperationNone reason:"menu-context" row:row operation:operation];
+			return NSDragOperationNone;
 		// The pane’s own menu: removals shift the landing slot (see below).
 		// A drop onto a submenu row retargets menu below and keeps append.
 		paneMenu = menu;
@@ -1392,7 +1380,7 @@ static CGFloat const kPaneWidth = 190;
 				}
 				else
 				{
-					return [self validatedDropResult:NSDragOperationNone reason:"anchor" row:row operation:operation];
+					return NSDragOperationNone;
 				}
 			}
 			else
@@ -1408,7 +1396,7 @@ static CGFloat const kPaneWidth = 190;
 	else
 	{
 		if(row < 0 || row >= (NSInteger)paneEntries[pane].size())
-			return [self validatedDropResult:NSDragOperationNone reason:"row" row:row operation:operation];
+			return NSDragOperationNone;
 		be::entry_ptr target = paneEntries[pane][row];
 		if(bundles::item_ptr represented = target->represented_item())
 		{
@@ -1417,11 +1405,11 @@ static CGFloat const kPaneWidth = 190;
 			else if(target->identifier() == "Menu Actions" && represented->kind() == bundles::kItemTypeBundle)
 				menu = represented->uuid();
 			else
-				return [self validatedDropResult:NSDragOperationNone reason:"target" row:row operation:operation];
+				return NSDragOperationNone;
 		}
 		else
 		{
-			return [self validatedDropResult:NSDragOperationNone reason:"target" row:row operation:operation];
+			return NSDragOperationNone;
 		}
 		index = target->has_children() ? target->children().size() : 0;
 	}
@@ -1434,7 +1422,7 @@ static CGFloat const kPaneWidth = 190;
 			sameBundle = menuItem->kind() == bundles::kItemTypeMenu && menuItem->bundle() == bundle;
 	}
 	if(!sameBundle)
-		return [self validatedDropResult:NSDragOperationNone reason:"same-bundle" row:row operation:operation];
+		return NSDragOperationNone;
 
 	// Dropping a single item where it already is — its own slot, or the gap
 	// directly below it (which collapses onto its slot once the dragged row
@@ -1450,9 +1438,9 @@ static CGFloat const kPaneWidth = 190;
 		if(item && item->parent_menu() == menu && home < landing)
 			landing -= 1;
 		if(item && item->parent_menu() == menu && landing == home)
-			return [self validatedDropResult:NSDragOperationNone reason:"noop" row:row operation:operation];
+			return NSDragOperationNone;
 	}
-	return [self validatedDropResult:NSDragOperationMove reason:"ok" row:row operation:operation];
+	return NSDragOperationMove;
 }
 
 - (BOOL)tableView:(NSTableView*)tableView acceptDrop:(id<NSDraggingInfo>)info row:(NSInteger)row dropOperation:(NSTableViewDropOperation)operation
@@ -1574,7 +1562,6 @@ static CGFloat const kPaneWidth = 190;
 	draggingActive = NO;
 	[self flushPendingRebuild];
 
-	os_log_error(OS_LOG_DEFAULT, "BundleEditor: drop applied %lu item(s) at %lu", (unsigned long)[uuids count], (unsigned long)at);
 	if(bundles::item_ptr first = bundles::lookup(to_s((NSString*)uuids[0])))
 		[self revealBundleItem:first];
 	return YES;
@@ -1695,9 +1682,13 @@ static CGFloat const kPaneWidth = 190;
 
 	auto base = changes.find(bundle);
 	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
-	if(!bundles::add_submenu_to_main_menu(infoPlist, submenuStr, "untitled submenu"))
+	if(!bundles::add_submenu_to_main_menu(infoPlist, submenuStr, "untitled category"))
 		return;
-	if(!bundles::insert_uuid_into_main_menu_at_index(infoPlist, bundleStr, menuStr, submenuStr, at))
+	// The anchor slot is a visible pane row: translate past entries no pane
+	// draws before using it as a menu index (see moveBundleItems).
+	std::pair<size_t, size_t> const converted = bundles::menu_indexes_for_pane_slot(
+		menuEntryStrings(infoPlist, bundleStr, menuStr), at, std::set<std::string>());
+	if(!bundles::insert_uuid_into_main_menu_at_index(infoPlist, bundleStr, menuStr, submenuStr, converted.first))
 		return;
 	if(!plist::equal(infoPlist, bundle->plist()))
 		changes[bundle] = infoPlist;
@@ -1705,11 +1696,11 @@ static CGFloat const kPaneWidth = 190;
 	// The submenu item itself has no file; its record lives in the bundle’s
 	// info.plist above, so it stays out of the changes map.
 	bundles::item_ptr submenu = std::make_shared<bundles::item_t>(submenuUUID, bundle, bundles::kItemTypeMenu);
-	submenu->set_name("untitled submenu");
+	submenu->set_name("untitled category");
 	{
 		bundles::notification_batch_t batch;
 		bundles::add_item(submenu);
-		bundles::add_to_menu_at_index(parentMenu, submenuUUID, at);
+		bundles::add_to_menu_at_index(parentMenu, submenuUUID, converted.second);
 	}
 
 	// The batch’s notification rebuilt the panes synchronously: select row.
@@ -1730,12 +1721,15 @@ static CGFloat const kPaneWidth = 190;
 
 	auto base = changes.find(bundle);
 	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
-	if(!bundles::insert_separator_into_main_menu_at_index(infoPlist, bundleStr, menuStr, at))
+	// Visible pane slot, not a menu index: translate (see moveBundleItems).
+	std::pair<size_t, size_t> const converted = bundles::menu_indexes_for_pane_slot(
+		menuEntryStrings(infoPlist, bundleStr, menuStr), at, std::set<std::string>());
+	if(!bundles::insert_separator_into_main_menu_at_index(infoPlist, bundleStr, menuStr, converted.first))
 		return;
 	if(!plist::equal(infoPlist, bundle->plist()))
 		changes[bundle] = infoPlist;
 
-	bundles::add_to_menu_at_index(parentMenu, bundles::item_t::menu_item_separator()->uuid(), at, false);
+	bundles::add_to_menu_at_index(parentMenu, bundles::item_t::menu_item_separator()->uuid(), converted.second, false);
 	[self selectRow:at inPane:pane];
 	[self didChangeModifiedState];
 }
@@ -1766,7 +1760,12 @@ static CGFloat const kPaneWidth = 190;
 
 	auto base = changes.find(bundle);
 	plist::dictionary_t infoPlist = base != changes.end() ? base->second : bundle->plist();
-	if(!bundles::remove_separator_from_main_menu_at_index(infoPlist, bundleStr, menuStr, index))
+	// The anchor index is a visible pane row: translate past entries no pane
+	// draws (see moveBundleItems) — dividing between orphans must not take
+	// out the wrong slot.
+	std::pair<size_t, size_t> const converted = bundles::menu_indexes_for_pane_slot(
+		menuEntryStrings(infoPlist, bundleStr, menuStr), index, std::set<std::string>());
+	if(!bundles::remove_separator_from_main_menu_at_index(infoPlist, bundleStr, menuStr, converted.first))
 	{
 		os_log_error(OS_LOG_DEFAULT, "BundleEditor: delete divider failed for menu %{public}s", menuStr.c_str());
 		return;
@@ -1774,7 +1773,7 @@ static CGFloat const kPaneWidth = 190;
 	if(!plist::equal(infoPlist, bundle->plist()))
 		changes[bundle] = infoPlist;
 
-	bundles::remove_separator_from_menu_at_index(parentMenu, index);
+	bundles::remove_separator_from_menu_at_index(parentMenu, converted.second);
 
 	// The removal notification rebuilt the panes synchronously: hold position.
 	NSTableView* tableView = paneTables[pane];
@@ -1843,9 +1842,11 @@ static CGFloat const kPaneWidth = 190;
 	[self didChangeModifiedState];
 }
 
-// Start an in-place rename of the submenu at the anchor row. Return commits
-// through tableView:setObjectValue:… below; Escape cancels with no call, so
-// there is nothing to disarm.
+// Rename the submenu at the anchor row through a dialog. In-place editing
+// proved unworkable (the table tears the edit session down the instant it
+// starts), and a dialog’s failure modes are all visible instead of silent.
+// Rename commits through tableView:setObjectValue:… below; anything but the
+// Rename button returns without touching the model.
 - (void)renameCategoryAtAnchor:(NSMenuItem*)sender
 {
 	oak::uuid_t parentMenu;
@@ -1853,28 +1854,42 @@ static CGFloat const kPaneWidth = 190;
 	size_t at = 0;
 	NSInteger pane = -1;
 	if(![self insertionTargetForAnchor:[sender representedObject] parentMenu:&parentMenu bundle:&bundle atIndex:&at pane:&pane])
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: rename category refused, bad anchor");
 		return;
+	}
 	// insertionTargetForAnchor reports the slot below the anchor row.
 	if(at == 0 || at - 1 >= paneEntries[pane].size())
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: rename category refused, slot %lu outside pane %ld (%lu rows)", (unsigned long)at, (long)pane, (unsigned long)paneEntries[pane].size());
 		return;
+	}
 	be::entry_ptr entry = paneEntries[pane][at - 1];
 	if(!entry->represented_item() || entry->represented_item()->kind() != bundles::kItemTypeMenu)
+	{
+		os_log_error(OS_LOG_DEFAULT, "BundleEditor: rename category refused, anchor row is not a submenu");
 		return;
-	[paneTables[pane] editColumn:0 row:(NSInteger)(at - 1) withEvent:nil select:YES];
+	}
+	NSTableView* tableView = paneTables[pane];
+	NSInteger const row = (NSInteger)(at - 1);
+	NSString* currentName = [NSString stringWithCxxString:entry->name()];
+	NSAlert* alert = [[NSAlert alloc] init];
+	alert.messageText = @"Rename Category";
+	alert.informativeText = [NSString stringWithFormat:@"Rename “%@” to:", currentName];
+	NSTextField* nameField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 280, 22)];
+	nameField.stringValue = currentName;
+	alert.accessoryView = nameField;
+	[alert addButtonWithTitle:@"Rename"];
+	[alert addButtonWithTitle:@"Cancel"];
+	[alert.window makeFirstResponder:nameField];
+	[nameField selectText:self];
+	if([alert runModal] != NSAlertFirstButtonReturn)
+		return;
+	[self tableView:tableView setObjectValue:nameField.stringValue forTableColumn:tableView.tableColumns[0] row:row];
 }
 
-// In-place editing is only ever offered for submenu rows, and only the
-// rename action above starts it: view-based tables do not edit on click.
-- (BOOL)tableView:(NSTableView*)tableView shouldEditTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row
-{
-	(void)tableColumn;
-	NSInteger pane = [self columnIndexForTableView:tableView];
-	if(pane == -1 || row < 0 || row >= (NSInteger)paneEntries[pane].size())
-		return NO;
-	bundles::item_ptr item = paneEntries[pane][row]->represented_item();
-	return item && item->kind() == bundles::kItemTypeMenu;
-}
-
+// Rename dialog commit path: validates the submenu row and writes the name
+// to the plist and the in-memory index. Blank or unchanged text reverts.
 - (void)tableView:(NSTableView*)tableView setObjectValue:(id)object forTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row
 {
 	(void)tableColumn;
@@ -1937,6 +1952,17 @@ static CGFloat const kPaneWidth = 190;
 	[self.window makeFirstResponder:nextPane];
 	if([nextPane selectedRow] == -1 && [nextPane numberOfRows] != 0)
 		[nextPane selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+	return YES;
+}
+
+// Miller back-out: focus the parent column, keeping its selection (which
+// still names this pane, so nothing rebuilds).
+- (BOOL)paneTableViewDidPressLeftArrow:(NSTableView*)tableView
+{
+	NSInteger const pane = [self columnIndexForTableView:tableView];
+	if(pane <= 0 || pane >= (NSInteger)[paneTables count])
+		return NO;
+	[self.window makeFirstResponder:paneTables[pane - 1]];
 	return YES;
 }
 
