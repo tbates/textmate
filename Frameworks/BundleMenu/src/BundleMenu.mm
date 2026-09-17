@@ -5,6 +5,7 @@
 #import <cf/cf.h>
 #import <ns/ns.h>
 #import <oak/oak.h>
+#import <OakAppKit/OakUIConstructionFunctions.h>
 
 @interface BundlePopupMenuTarget : NSObject
 @property (nonatomic) NSString* selectedItemUUID;
@@ -139,7 +140,7 @@ bundles::item_ptr OakShowMenuForBundleItems (std::vector<bundles::item_ptr> cons
 		return items.front();
 
 	NSMenu* menu = [NSMenu new];
-	menu.font = [NSFont menuFontOfSize:([NSUserDefaults.standardUserDefaults integerForKey:@"OakBundleManagerDisambiguateMenuFontSize"] ?: 11)];
+	menu.font = OakScaledUIFont([NSFont menuFontOfSize:([NSUserDefaults.standardUserDefaults integerForKey:@"OakBundleManagerDisambiguateMenuFontSize"] ?: 11)]);
 	OakAddBundlesToMenu(items, false, menu, @selector(performBundleItemWithUUIDStringFrom:));
 	[menu update];
 

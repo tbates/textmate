@@ -16,7 +16,9 @@ static CGFloat OakClampUIFontScaleFactor (CGFloat scale)
 CGFloat OakUIFontScaleFactor ()
 {
 	id value = [NSUserDefaults.standardUserDefaults objectForKey:kUserDefaultsUIFontScaleFactorKey];
-	if(![value isKindOfClass:[NSNumber class]] || [value doubleValue] <= 0)
+	if(![value isKindOfClass:[NSNumber class]] && ![value isKindOfClass:[NSString class]]) // `defaults write` and launch arguments store the number as a string
+		return 1;
+	if([value doubleValue] <= 0)
 		return 1;
 	return OakClampUIFontScaleFactor([value doubleValue]);
 }
@@ -43,19 +45,32 @@ CGFloat OakScaledUIMetric (CGFloat metric)
 	return round(metric * OakUIFontScaleFactor());
 }
 
-// Draws base into a fresh image rather than copying it and changing the
-// size: the symbol-backed system images (NSImageNameAddTemplate and
-// friends) keep rendering at their own point size when only `size` changes.
+// The system template images (NSImageNameAddTemplate and friends) are SF
+// Symbols. A control draws a symbol at its symbol configuration — 13 pt
+// medium for a regular-size control, measured against a plain NSButton —
+// not at the image’s nominal size (NSImageNameRefreshTemplate reports
+// 18×21 but is drawn in 14×16). Rasterising such an image into its nominal
+// size loses that and makes the glyph about 30 % too big at every scale, so
+// symbols are re-configured at 13 × scale pt and stay symbols. For any
+// other image imageWithSymbolConfiguration: returns the receiver, and that
+// one is drawn into a fresh image at base.size × scale rather than copied
+// with a new size, which a symbol would ignore.
 NSImage* OakScaledUIImage (NSImage* base)
 {
 	if(!base)
 		return nil;
 	CGFloat scale = OakUIFontScaleFactor();
-	NSSize size = NSMakeSize(base.size.width * scale, base.size.height * scale);
-	NSImage* res = [NSImage imageWithSize:size flipped:NO drawingHandler:^BOOL(NSRect dstRect){
-		[base drawInRect:dstRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
-		return YES;
-	}];
+
+	NSImageSymbolConfiguration* configuration = [NSImageSymbolConfiguration configurationWithPointSize:NSFont.systemFontSize * scale weight:NSFontWeightRegular scale:NSImageSymbolScaleMedium];
+	NSImage* res = [base imageWithSymbolConfiguration:configuration];
+	if(res == base)
+	{
+		NSSize size = NSMakeSize(base.size.width * scale, base.size.height * scale);
+		res = [NSImage imageWithSize:size flipped:NO drawingHandler:^BOOL(NSRect dstRect){
+			[base drawInRect:dstRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+			return YES;
+		}];
+	}
 	[res setTemplate:base.isTemplate];
 	res.accessibilityDescription = base.accessibilityDescription;
 	return res;
@@ -72,10 +87,15 @@ CGFloat OakUIScaleThatFits (NSSize designSize, NSSize availableSize, CGFloat sca
 	return std::max<CGFloat>(scale, 1);
 }
 
-NSFont* OakStatusBarFont ()
+NSFont* OakStatusBarBaseFont ()
 {
 	CGFloat size = [NSUserDefaults.standardUserDefaults integerForKey:@"statusBarFontSize"] ?: 12;
-	return [NSFont messageFontOfSize:size * OakUIFontScaleFactor()];
+	return [NSFont messageFontOfSize:size];
+}
+
+NSFont* OakStatusBarFont ()
+{
+	return OakScaledUIFont(OakStatusBarBaseFont());
 }
 
 NSFont* OakControlFont ()

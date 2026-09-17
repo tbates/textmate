@@ -113,3 +113,51 @@ void test_label_default_font_is_system_font ()
 	OAK_ASSERT_EQ(labelFont.pointSize, systemFont.pointSize);
 	OAK_ASSERT([labelFont.familyName isEqualToString:systemFont.familyName]);
 }
+
+// The system template images (NSImageNameRefreshTemplate and friends) are
+// SF Symbols. A control draws a symbol at its symbol configuration — 13 pt
+// medium for a regular-size control — not at the image’s nominal size: the
+// refresh arrow reports 18×21 but a plain button fits it in 14×16. So the
+// scaled image must stay a symbol, configured at 13 × scale pt, or the
+// glyph comes out about 30 % too big at every scale.
+void test_scaled_symbol_image_keeps_the_control_point_size ()
+{
+	NSImage* base = [NSImage imageNamed:NSImageNameRefreshTemplate];
+	NSSize (^symbolSize)(CGFloat) = ^(CGFloat pointSize){
+		return [base imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:pointSize weight:NSFontWeightRegular scale:NSImageSymbolScaleMedium]].size;
+	};
+
+	inject(nil);
+	OAK_ASSERT(!NSEqualSizes(symbolSize(13), base.size)); // the nominal box is not what a control draws
+	OAK_ASSERT(NSEqualSizes(OakScaledUIImage(base).size, symbolSize(13)));
+
+	inject(@2);
+	NSImage* scaled = OakScaledUIImage(base);
+	OAK_ASSERT(NSEqualSizes(scaled.size, symbolSize(26)));
+	OAK_ASSERT(scaled.isTemplate);
+	OAK_ASSERT(NSEqualSizes(base.size, [NSImage imageNamed:NSImageNameRefreshTemplate].size)); // shared named image untouched
+	inject(nil);
+}
+
+// A view inside an OakScaledContainerView is zoomed as a whole, so it needs
+// the status bar font at its base size or the text is scaled twice.
+void test_status_bar_base_font_is_unscaled ()
+{
+	inject(@2);
+	OAK_ASSERT_EQ(OakStatusBarBaseFont().pointSize, 12.0);
+	OAK_ASSERT_EQ(OakStatusBarFont().pointSize, 24.0);
+	OAK_ASSERT([OakStatusBarFont().familyName isEqualToString:OakStatusBarBaseFont().familyName]);
+	inject(nil);
+}
+
+// `defaults write com.macromates.TextMate uiFontScaleFactor 1.5` stores the
+// string "1.5" (so does a -uiFontScaleFactor 1.5 launch argument), which must
+// count like the number.
+void test_scale_from_a_string_value ()
+{
+	inject(@"1.5");
+	OAK_ASSERT_EQ(OakUIFontScaleFactor(), 1.5);
+	inject(@"abc");
+	OAK_ASSERT_EQ(OakUIFontScaleFactor(), 1.0);
+	inject(nil);
+}

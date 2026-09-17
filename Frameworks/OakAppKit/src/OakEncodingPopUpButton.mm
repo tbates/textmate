@@ -5,6 +5,7 @@
 #import <ns/ns.h>
 #import <text/parse.h>
 #import <oak/oak.h>
+#import "OakScaledContainerView.h"
 
 static NSString* const kUserDefaultsAvailableEncodingsKey = @"availableEncodings";
 
@@ -281,6 +282,12 @@ namespace // PopulateMenu{Flat,Hierarchical}
 {
 	static OakCustomizeEncodingsWindowController* sharedInstance = [self new];
 	return sharedInstance;
+}
+
+- (void)windowDidLoad
+{
+	[super windowDidLoad];
+	OakSetScaledWindowContentView(self.window, self.window.contentView); // zoomed by the UI scale
 }
 
 - (id)init

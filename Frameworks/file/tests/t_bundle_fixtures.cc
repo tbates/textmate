@@ -60,6 +60,15 @@ void setup_fixtures ()
 		"	scopeName      = 'source.xml.plist';"
 		"}";
 
+	// The shipped Property List grammar’s first-line pattern, which reads on
+	// past a first line that has no newline (t_type.cc).
+	static std::string SniffingPlistGrammar =
+		"{	name           = 'Sniffing Plist';"
+		"	firstLineMatch = '\\s*<\\?xml .*\\n\\s*<!DOCTYPE\\s*(?i:plist)\\s';"
+		"	patterns       = ( );"
+		"	scopeName      = 'source.plist.sniffed';"
+		"}";
+
 	static std::string ASCIIPlistGrammar =
 		"{	fileTypes      = ( plist, dict );"
 		"	name           = 'ASCII Plist';"
@@ -81,6 +90,7 @@ void setup_fixtures ()
 	bundleIndex.add(bundles::kItemTypeGrammar, TextLanguageGrammar);
 	bundleIndex.add(bundles::kItemTypeGrammar, CLanguageGrammar);
 	bundleIndex.add(bundles::kItemTypeGrammar, XMLPlistGrammar);
+	bundleIndex.add(bundles::kItemTypeGrammar, SniffingPlistGrammar);
 	bundleIndex.add(bundles::kItemTypeGrammar, RubyLanguageGrammar);
 	bundleIndex.add(bundles::kItemTypeGrammar, RSpecLanguageGrammar);
 	bundleIndex.add(bundles::kItemTypeGrammar, CMakeListsLanguageGrammar);

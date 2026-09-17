@@ -19,6 +19,7 @@
 #import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakAppKit/NSMenuItem Additions.h>
 #import <BundleMenu/BundleMenu.h>
+#import <OakAppKit/OakScaledContainerView.h>
 
 static NSString* const kUserDefaultsLineNumberScaleFactorKey = @"lineNumberScaleFactor";
 static NSString* const kUserDefaultsLineNumberFontNameKey    = @"lineNumberFontName";
@@ -600,6 +601,7 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 
 		NSMenuItem* menuItem = [bundleItemsMenu addItemWithTitle:[NSString stringWithCxxString:pair.first] action:NULL keyEquivalent:@""];
 		menuItem.submenu = [[NSMenu alloc] initWithTitle:[NSString stringWithCxxString:pair.second->uuid()]];
+		menuItem.submenu.font = bundleItemsMenu.font; // a submenu does not inherit the scaled menu font
 		menuItem.submenu.delegate = BundleMenuDelegate.sharedInstance;
 
 		if(selectedGrammar)
@@ -649,7 +651,10 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 - (IBAction)showTabSizeSelectorPanel:(id)sender
 {
 	if(!tabSizeSelectorPanel)
+	{
 		[[NSBundle bundleForClass:[self class]] loadNibNamed:@"TabSizeSetting" owner:self topLevelObjects:NULL];
+		OakSetScaledWindowContentView(tabSizeSelectorPanel, tabSizeSelectorPanel.contentView); // zoomed by the UI scale
+	}
 	[tabSizeSelectorPanel makeKeyAndOrderFront:self];
 }
 

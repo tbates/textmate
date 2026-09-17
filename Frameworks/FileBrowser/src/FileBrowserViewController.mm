@@ -188,6 +188,21 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 - (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
 {
 	_fileBrowserView.outlineView.rowHeight = OakScaledUIMetric(_baseRowHeight);
+	_fileBrowserView.headerView.folderPopUpButton.menu.font = OakScaledUIFont([NSFont menuFontOfSize:0]);
+	[self willChangeValueForKey:@"folderPopUpImage"];
+	[self didChangeValueForKey:@"folderPopUpImage"];
+}
+
+// The current folder’s icon for the header popup: the shared file reference’s
+// 16 pt image, scaled. Bound by the popup’s first menu item.
++ (NSSet*)keyPathsForValuesAffectingFolderPopUpImage
+{
+	return [NSSet setWithObject:@"fileReference.image"];
+}
+
+- (NSImage*)folderPopUpImage
+{
+	return OakScaledUIImage(self.fileReference.image);
 }
 
 - (void)userDefaultsDidChange:(id)sender
@@ -211,7 +226,7 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 		_currentLocationMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(takeURLFrom:) keyEquivalent:@""];
 		_currentLocationMenuItem.target = self;
 		[_currentLocationMenuItem bind:NSTitleBinding toObject:self withKeyPath:@"fileItem.displayName" options:nil];
-		[_currentLocationMenuItem bind:NSImageBinding toObject:self withKeyPath:@"fileReference.image" options:nil];
+		[_currentLocationMenuItem bind:NSImageBinding toObject:self withKeyPath:@"folderPopUpImage" options:nil];
 
 		NSOutlineView* outlineView = _fileBrowserView.outlineView;
 		outlineView.dataSource   = self;
@@ -240,6 +255,7 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 		[headerView.goForwardButton bind:NSEnabledBinding toObject:self withKeyPath:@"canGoForward" options:nil];
 
 		NSMenu* folderPopUpMenu = headerView.folderPopUpButton.menu;
+		folderPopUpMenu.font = OakScaledUIFont([NSFont menuFontOfSize:0]);
 		[folderPopUpMenu removeAllItems];
 		[folderPopUpMenu addItem:_currentLocationMenuItem];
 		[headerView.folderPopUpButton selectItem:_currentLocationMenuItem];
@@ -394,7 +410,7 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 	{
 		NSMenuItem* menuItem = [menu addItemWithTitle:fileItem.localizedName action:@selector(takeURLFrom:) keyEquivalent:@""];
 		menuItem.representedObject = fileItem.resolvedURL;
-		menuItem.image             = [TMFileReference imageForURL:fileItem.resolvedURL size:NSMakeSize(16, 16)];
+		menuItem.image             = [TMFileReference imageForURL:fileItem.resolvedURL size:NSMakeSize(OakScaledUIMetric(16), OakScaledUIMetric(16))];
 		menuItem.target            = self;
 	}
 

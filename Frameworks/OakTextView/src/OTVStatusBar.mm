@@ -175,6 +175,11 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 	for(NSControl* control in @[ self.lineLabel, self.grammarPopUp, self.tabSizePopUp, self.bundleItemsPopUp, self.symbolPopUp ])
 		control.font = font;
 
+	// The dropped-down menus use the menu font, not the control’s.
+	NSFont* menuFont = OakScaledUIFont([NSFont menuFontOfSize:0]);
+	for(NSPopUpButton* popUp in @[ self.grammarPopUp, self.tabSizePopUp, self.bundleItemsPopUp, self.symbolPopUp ])
+		popUp.menu.font = menuFont;
+
 	NSFontDescriptor* descriptor = [font.fontDescriptor fontDescriptorByAddingAttributes:@{
 		NSFontFeatureSettingsAttribute: @[ @{ NSFontFeatureTypeIdentifierKey: @(kNumberSpacingType), NSFontFeatureSelectorIdentifierKey: @(kMonospacedNumbersSelector) } ]
 	}];

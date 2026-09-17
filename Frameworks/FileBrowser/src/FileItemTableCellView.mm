@@ -75,6 +75,7 @@ static void* kObjectValueURLObserverContext = &kObjectValueURLObserverContext;
 @interface FileItemTableCellView () <NSTextFieldDelegate>
 @property (nonatomic) NSLayoutConstraint* iconWidthConstraint;
 @property (nonatomic) NSLayoutConstraint* iconHeightConstraint;
+@property (nonatomic) NSFont* baseFont; // the label’s font at the stock scale
 @property (nonatomic) FileItemFinderTagsView* finderTagsView;
 @property (nonatomic) TMFileReference* fileReference;
 @end
@@ -101,8 +102,9 @@ static void* kObjectValueURLObserverContext = &kObjectValueURLObserverContext;
 		_iconWidthConstraint.priority = _iconHeightConstraint.priority = NSLayoutPriorityRequired - 1;
 		_iconWidthConstraint.active = _iconHeightConstraint.active = YES;
 
-		NSTextField* textField = OakCreateLabel(@"", OakScaledUIFont([NSFont controlContentFontOfSize:0]));
+		NSTextField* textField = OakCreateLabel();
 		textField.cell = [[FileItemSelectBasenameCell alloc] initTextCell:@""];
+		_baseFont = textField.font; // the replacement cell’s default, which is what the browser has always shown
 		[textField.cell setWraps:NO];
 		[textField.cell setLineBreakMode:NSLineBreakByTruncatingMiddle];
 		textField.formatter = [[FileItemFormatter alloc] initWithTableCellView:self];
@@ -135,6 +137,7 @@ static void* kObjectValueURLObserverContext = &kObjectValueURLObserverContext;
 		[_closeButton bind:NSHiddenBinding    toObject:self withKeyPath:@"fileReference.closable"            options:@{ NSValueTransformerNameBindingOption: NSNegateBooleanTransformerName }];
 
 		self.textField = textField;
+		[self updateFont];
 
 		[self addObserver:self forKeyPath:@"objectValue.URL" options:NSKeyValueObservingOptionNew context:kObjectValueURLObserverContext];
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
@@ -142,10 +145,15 @@ static void* kObjectValueURLObserverContext = &kObjectValueURLObserverContext;
 	return self;
 }
 
+- (void)updateFont
+{
+	self.textField.font = OakScaledUIFont(_baseFont);
+	_iconWidthConstraint.constant = _iconHeightConstraint.constant = OakScaledUIMetric(16);
+}
+
 - (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
 {
-	self.textField.font = OakScaledUIFont([NSFont controlContentFontOfSize:0]);
-	_iconWidthConstraint.constant = _iconHeightConstraint.constant = OakScaledUIMetric(16);
+	[self updateFont];
 }
 
 - (void)setBackgroundStyle:(NSBackgroundStyle)newBackgroundStyle

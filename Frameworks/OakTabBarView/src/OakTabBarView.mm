@@ -1183,10 +1183,11 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 	totalWidth += 1; // We place leftmost tab at position -1
 
 	NSMutableArray<OakTabFrame*>* array = [NSMutableArray array];
-	if(_maximumTabSize * tabItems.count <= totalWidth)
+	CGFloat const maximumTabSize = OakScaledUIMetric(_maximumTabSize); // the titles scale, so the tabs must
+	if(maximumTabSize * tabItems.count <= totalWidth)
 	{
 		for(NSUInteger i = 0; i < tabItems.count; ++i)
-			[array addObject:[[OakTabFrame alloc] initWithTabItem:tabItems[i] width:_maximumTabSize]];
+			[array addObject:[[OakTabFrame alloc] initWithTabItem:tabItems[i] width:maximumTabSize]];
 	}
 	else
 	{
@@ -1249,7 +1250,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 {
 	static NSString* const firstTabIdentifier = [NSUUID UUID].UUIDString;
 	CGFloat const visibleWidth = NSWidth(self.bounds) - NSWidth(self.createNewTabButton.frame);
-	NSUInteger const countOfVisibleTabs = MIN(MAX(0, floor(visibleWidth / _minimumTabSize)), _tabItems.count);
+	NSUInteger const countOfVisibleTabs = MIN(MAX(0, floor(visibleWidth / OakScaledUIMetric(_minimumTabSize))), _tabItems.count);
 
 	NSMutableArray<OakTabItem*>* tabItems = [NSMutableArray array];
 	BOOL didIncludeSelected = [_tabItems filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"selected == YES"]].count == 0;

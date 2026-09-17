@@ -18,13 +18,14 @@
 	NSUInteger _requestID;
 }
 @property (nonatomic, weak) NSView* lastView;
+@property (nonatomic) CGFloat scale; // the interface scale the window was built for
 @end
 
 @implementation OTVHUD
 - (instancetype)initWithView:(NSView*)aView
 {
-	CGFloat const kWidth  = 100;
-	CGFloat const kHeight = 30;
+	CGFloat const kWidth  = OakScaledUIMetric(100); // a new window each time it shows, so fixed at creation
+	CGFloat const kHeight = OakScaledUIMetric(30);
 
 	NSRect aRect = [aView.window convertRectToScreen:[aView convertRect:[aView visibleRect] toView:nil]];
 	aRect = NSInsetRect(aRect, 10, 10);
@@ -37,6 +38,7 @@
 	if(self = [super initWithWindow:window])
 	{
 		_lastView = aView;
+		_scale    = OakUIFontScaleFactor();
 
 		window.ignoresMouseEvents = YES;
 		window.backgroundColor    = [NSColor clearColor];
@@ -46,7 +48,7 @@
 		OTVHUDView* contentView = [[OTVHUDView alloc] initWithFrame:aRect];
 		window.contentView = contentView;
 
-		_textField = OakCreateLabel(@"", [NSFont systemFontOfSize:20]);
+		_textField = OakCreateLabel(@"", OakScaledUIFont([NSFont systemFontOfSize:20]));
 		self.stringValue = @"88888";
 
 		[_textField sizeToFit];
@@ -108,7 +110,7 @@
 	static __weak OTVHUD* LastHUD;
 
 	OTVHUD* res = LastHUD;
-	if(!res || res.lastView != aView)
+	if(!res || res.lastView != aView || res.scale != OakUIFontScaleFactor())
 		LastHUD = res = [[OTVHUD alloc] initWithView:aView];
 
 	res.stringValue = someText;

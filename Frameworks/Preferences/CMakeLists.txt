@@ -11,3 +11,4 @@ target_link_libraries(Preferences PUBLIC
 target_include_directories(Preferences PRIVATE
   $<TARGET_PROPERTY:OakTabBarView,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(Preferences PRIVATE "-framework Cocoa")
+textmate_add_tests(Preferences)

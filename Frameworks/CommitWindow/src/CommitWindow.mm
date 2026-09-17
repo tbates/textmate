@@ -4,6 +4,7 @@
 #import "CWTableCellView.h"
 #import <OakAppKit/NSAlert Additions.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
+#import <OakAppKit/OakScaledContainerView.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakTextView/OakDocumentView.h>
 #import <document/OakDocument.h>
@@ -86,6 +87,7 @@ static void* kOakCommitWindowIncludeItemObserverContext = &kOakCommitWindowInclu
 {
 	id _eventMonitor;
 }
+@property (nonatomic) NSView* contentView; // the window’s content, zoomed by an OakScaledContainerView
 @property (nonatomic) NSMutableDictionary*               options;
 @property (nonatomic) NSMutableArray*                    parameters;
 @property (nonatomic) std::map<std::string, std::string> environment;
@@ -149,6 +151,10 @@ static void* kOakCommitWindowIncludeItemObserverContext = &kOakCommitWindowInclu
 		self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 600, 350) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
 		self.window.delegate          = self;
 		self.window.frameAutosaveName = @"Commit Window";
+		// A sheet keeps the application from terminating by default; this one
+		// is up for as long as the commit tool waits, which made ⌘Q appear to
+		// do nothing. Quitting abandons the commit, as cancelling it would.
+		self.window.preventsApplicationTerminationWhenModal = NO;
 
 		_commitButton = OakCreateButton([self commitButtonTitle]);
 		_commitButton.action                    = @selector(performCommit:);
@@ -178,7 +184,7 @@ static void* kOakCommitWindowIncludeItemObserverContext = &kOakCommitWindowInclu
 		_topDocumentViewDivider    = OakCreateNSBoxSeparator();
 		_bottomDocumentViewDivider = OakCreateNSBoxSeparator();
 
-		NSView* contentView = self.window.contentView;
+		NSView* contentView = self.contentView = [[NSView alloc] initWithFrame:NSZeroRect];
 		OakAddAutoLayoutViewsToSuperview([self.allViews allValues], contentView);
 
 		NSDictionary* views = self.allViews;
@@ -195,9 +201,11 @@ static void* kOakCommitWindowIncludeItemObserverContext = &kOakCommitWindowInclu
 		else
 		{
 			_documentViewHeightConstraint = [NSLayoutConstraint constraintWithItem:_documentView attribute:NSLayoutAttributeHeight relatedBy:NSLayoutRelationGreaterThanOrEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:kOakCommitWindowMinimumDocumentViewHeight];
-			[self.window.contentView addConstraint:_documentViewHeightConstraint];
+			[contentView addConstraint:_documentViewHeightConstraint];
 			[self setupBottomButtonsConstraints];
 		}
+
+		OakSetScaledWindowContentView(self.window, contentView); // zoomed by the UI scale
 
 		[_arrayController addObserver:self forKeyPath:@"arrangedObjects.commit" options:NSKeyValueObservingOptionInitial|NSKeyValueObservingOptionNew context:kOakCommitWindowIncludeItemObserverContext];
 
@@ -263,7 +271,7 @@ static void* kOakCommitWindowIncludeItemObserverContext = &kOakCommitWindowInclu
 
 - (void)setupBottomButtonsConstraints
 {
-	NSView* contentView = self.window.contentView;
+	NSView* contentView = self.contentView;
 
 	if(_bottomButtonsConstraints)
 		[contentView removeConstraints:_bottomButtonsConstraints];
@@ -296,7 +304,7 @@ static void* kOakCommitWindowIncludeItemObserverContext = &kOakCommitWindowInclu
 {
 	[self.window makeFirstResponder:self.documentView.textView];
 
-	NSView* contentView = self.window.contentView;
+	NSView* contentView = self.contentView;
 	[contentView removeConstraints:_scrollViewConstraints];
 	[contentView removeConstraint:_scrollViewHeightConstraint];
 	_scrollViewConstraints = nil;
@@ -327,7 +335,7 @@ static void* kOakCommitWindowIncludeItemObserverContext = &kOakCommitWindowInclu
 
 - (void)showTableViewAnimated:(BOOL)animated
 {
-	NSView* contentView = self.window.contentView;
+	NSView* contentView = self.contentView;
 
 	NSTableColumn* tableColumn = [[NSTableColumn alloc] initWithIdentifier:@"path"];
 	tableColumn.editable = NO;
@@ -401,7 +409,7 @@ static void* kOakCommitWindowIncludeItemObserverContext = &kOakCommitWindowInclu
 
 - (void)hideTableViewAnimated:(BOOL)animated
 {
-	NSView* contentView = self.window.contentView;
+	NSView* contentView = self.contentView;
 
 	[contentView removeConstraint:_documentViewHeightConstraint];
 	_documentViewHeightConstraint = [NSLayoutConstraint constraintWithItem:_documentView attribute:NSLayoutAttributeHeight relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:NSHeight(_documentView.frame)];

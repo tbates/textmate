@@ -7,22 +7,28 @@ static void inject (id value)
 	[NSUserDefaults.standardUserDefaults setVolatileDomain:domain forName:NSArgumentDomain];
 }
 
-// A content view whose autolayout fitting size is 100 × 50.
-static NSView* content ()
+// A content view with a fixed autolayout fitting size.
+static NSView* contentOfSize (CGFloat width, CGFloat height)
 {
 	NSView* res = [[NSView alloc] initWithFrame:NSZeroRect];
 	NSView* inner = [[NSView alloc] initWithFrame:NSZeroRect];
 	inner.translatesAutoresizingMaskIntoConstraints = NO;
 	[res addSubview:inner];
 	[NSLayoutConstraint activateConstraints:@[
-		[inner.widthAnchor constraintEqualToConstant:100],
-		[inner.heightAnchor constraintEqualToConstant:50],
+		[inner.widthAnchor constraintEqualToConstant:width],
+		[inner.heightAnchor constraintEqualToConstant:height],
 		[inner.leadingAnchor constraintEqualToAnchor:res.leadingAnchor],
 		[inner.trailingAnchor constraintEqualToAnchor:res.trailingAnchor],
 		[inner.topAnchor constraintEqualToAnchor:res.topAnchor],
 		[inner.bottomAnchor constraintEqualToAnchor:res.bottomAnchor],
 	]];
 	return res;
+}
+
+// The usual 100 × 50 content.
+static NSView* content ()
+{
+	return contentOfSize(100, 50);
 }
 
 void test_scale_that_fits ()
@@ -182,6 +188,232 @@ void test_window_growth_is_capped_by_screen ()
 	OAK_ASSERT_EQ(NSHeight(big), 300.0);
 	OAK_ASSERT(NSContainsRect(NSScreen.mainScreen.visibleFrame, window.frame)); // moved back on screen, not just clamped in size
 
+	OakSetUIFontScaleFactor(1);
+	[window close];
+}
+
+// A window can hold a second container in its title bar (the choosers keep
+// their search field there). That one must zoom its content and report the
+// scaled size, but leave the window frame and the saved scale to the
+// content container, or the window would be resized twice.
+void test_container_that_does_not_resize_the_window ()
+{
+	inject(nil);
+	NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+	[defaults removeObjectForKey:kUserDefaultsUIFontScaleFactorKey];
+	[defaults removeObjectForKey:@"OakScaledContainerScale t_scaled_container_view_titlebar"];
+
+	NSRect visible = NSScreen.mainScreen.visibleFrame;
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(visible) + 100, NSMinY(visible) + 350, 300, 150) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+	window.frameAutosaveName = @"t_scaled_container_view_titlebar";
+	OakScaledContainerView* container = [[OakScaledContainerView alloc] initWithContentView:content()];
+	container.resizesWindow = NO;
+	[window.contentView addSubview:container];
+	[container setFrameSize:NSMakeSize(300, 50)];
+	[window layoutIfNeeded];
+	NSRect base = window.frame;
+
+	OakSetUIFontScaleFactor(2);
+	[window layoutIfNeeded];
+	OAK_ASSERT_EQ(container.effectiveScale, 2.0);
+	OAK_ASSERT_EQ(container.intrinsicContentSize.height, 100.0);
+	OAK_ASSERT_EQ(container.frame.size.height, 100.0); // a title bar accessory is as tall as its frame, so the container sets it
+	OAK_ASSERT_EQ(container.frame.size.width, 300.0);  // the width is the superview’s business
+	OAK_ASSERT_EQ(container.bounds.size.width, 150.0); // content still zoomed
+	OAK_ASSERT(NSEqualRects(window.frame, base));
+	OAK_ASSERT([defaults objectForKey:@"OakScaledContainerScale t_scaled_container_view_titlebar"] == nil);
+
+	OakSetUIFontScaleFactor(1);
+	[window close];
+	[defaults removeObjectForKey:@"NSWindow Frame t_scaled_container_view_titlebar"];
+}
+
+// The choosers build their views lazily, after the content view is
+// installed. The content view keeps its autoresizing mask, so its frame is
+// a required constraint: if it were left at the empty content’s 0 × 0
+// fitting size, the first subview with a minimum height would make the
+// layout unsatisfiable. Installing must therefore size the content to the
+// window right away.
+void test_content_added_after_install_fits ()
+{
+	inject(nil);
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(100, 600, 300, 150) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+	NSView* empty = [[NSView alloc] initWithFrame:NSZeroRect];
+	OakSetScaledWindowContentView(window, empty);
+	OAK_ASSERT_EQ(empty.frame.size.width, 300.0);
+	OAK_ASSERT_EQ(empty.frame.size.height, 150.0);
+
+	NSView* footer = [[NSView alloc] initWithFrame:NSZeroRect];
+	footer.translatesAutoresizingMaskIntoConstraints = NO;
+	[empty addSubview:footer];
+	[empty addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-(>=77)-[footer(==30)]|" options:0 metrics:nil views:@{ @"footer": footer }]]; // raises if the content were 0 × 0
+	[window layoutIfNeeded];
+	OAK_ASSERT_EQ(NSMinY(footer.frame), 0.0);
+	OAK_ASSERT_EQ(NSWidth(empty.frame), 300.0);
+	[window close];
+}
+
+// A frame saved before any scale existed (no OakScaledContainerScale key
+// next to it) was saved at scale 1, and so was the frame a window is
+// created with in code. Either must grow to the current scale.
+void test_frame_without_saved_scale_is_treated_as_scale_one ()
+{
+	// Its own autosave name: a closed window from another test still holds the shared one, and a name in use is refused.
+	inject(@2);
+	NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+	[defaults removeObjectForKey:@"NSWindow Frame t_scaled_container_view_unscaled"];
+	[defaults removeObjectForKey:@"OakScaledContainerScale t_scaled_container_view_unscaled"];
+
+	NSRect visible = NSScreen.mainScreen.visibleFrame;
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(visible) + 100, NSMinY(visible) + 350, 300, 150) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+	window.frameAutosaveName = @"t_scaled_container_view_unscaled";
+	OakSetScaledWindowContentView(window, content());
+	[window layoutIfNeeded];
+	NSRect rect = [window contentRectForFrameRect:window.frame];
+	OAK_ASSERT_EQ(NSWidth(rect), 600.0);
+	OAK_ASSERT_EQ(NSHeight(rect), 300.0);
+	OAK_ASSERT_EQ([defaults doubleForKey:@"OakScaledContainerScale t_scaled_container_view_unscaled"], 2.0);
+	[window close];
+	[defaults removeObjectForKey:@"OakScaledContainerScale t_scaled_container_view_unscaled"];
+	[defaults removeObjectForKey:@"NSWindow Frame t_scaled_container_view_unscaled"];
+	inject(nil);
+}
+
+// A window with no autosave name has the frame it was created with in
+// code, which is a scale-1 frame too.
+void test_window_without_autosave_name_is_brought_to_current_scale ()
+{
+	inject(@2);
+	NSRect visible = NSScreen.mainScreen.visibleFrame;
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(visible) + 100, NSMinY(visible) + 350, 300, 150) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+	OakSetScaledWindowContentView(window, content());
+	[window layoutIfNeeded];
+	NSRect rect = [window contentRectForFrameRect:window.frame];
+	OAK_ASSERT_EQ(NSWidth(rect), 600.0);
+	OAK_ASSERT_EQ(NSHeight(rect), 300.0);
+	[window close];
+	inject(nil);
+}
+
+// With a scaled accessory in the title bar, the window’s chrome changes
+// height with the scale too. The content container must budget for that,
+// or each round trip leaves the accessory’s old height in the content.
+void test_window_budgets_for_scaled_titlebar_accessory ()
+{
+	inject(nil);
+	[NSUserDefaults.standardUserDefaults removeObjectForKey:kUserDefaultsUIFontScaleFactorKey];
+	NSRect visible = NSScreen.mainScreen.visibleFrame;
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(visible) + 100, NSMinY(visible) + 350, 300, 150) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+	OakSetScaledWindowContentView(window, content());
+
+	OakScaledContainerView* accessory = [[OakScaledContainerView alloc] initWithContentView:content()];
+	accessory.resizesWindow = NO;
+	NSTitlebarAccessoryViewController* controller = [[NSTitlebarAccessoryViewController alloc] init];
+	controller.view = accessory;
+	[accessory setFrameSize:accessory.intrinsicContentSize]; // after the controller has the view, as the choosers do; the controller resets the frame when it takes the view
+	[window addTitlebarAccessoryViewController:controller];
+	[window layoutIfNeeded];
+	OAK_ASSERT_EQ(NSHeight(accessory.frame), 50.0);
+	NSRect base = [window contentRectForFrameRect:window.frame];
+	OAK_ASSERT_EQ(NSHeight(base), 100.0); // the accessory took its 50 pt from the content, as when the choosers are built
+
+	OakSetUIFontScaleFactor(2);
+	[window layoutIfNeeded];
+	OAK_ASSERT_EQ(NSHeight(accessory.frame), 100.0);
+	NSRect big = [window contentRectForFrameRect:window.frame];
+	OAK_ASSERT_EQ(NSWidth(big), 600.0);
+	OAK_ASSERT_EQ(NSHeight(big), 200.0);
+
+	OakSetUIFontScaleFactor(1);
+	[window layoutIfNeeded];
+	NSRect back = [window contentRectForFrameRect:window.frame];
+	OAK_ASSERT_EQ(NSHeight(back), 100.0);
+	OAK_ASSERT_EQ(NSHeight(accessory.frame), 50.0);
+	[window close];
+}
+
+// A title bar container follows the scale of the container that sizes the
+// window, whatever the window’s own size and even when that scale is capped
+// by the screen: the window is budgeted for that scale. Judging the room by
+// the screen alone would scale the accessory more than the content, and by
+// the screen minus the window would leave a tall window’s accessory unscaled.
+void test_titlebar_container_follows_the_window_container ()
+{
+	inject(nil);
+	[NSUserDefaults.standardUserDefaults removeObjectForKey:kUserDefaultsUIFontScaleFactorKey];
+	NSRect visible = NSScreen.mainScreen.visibleFrame;
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(visible), NSMinY(visible), 300, round(NSHeight(visible) / 1.5)) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+	OakSetScaledWindowContentView(window, contentOfSize(100, round(NSHeight(visible) / 1.5))); // too tall to double: the owner’s scale is capped between 1 and 2
+	OakScaledContainerView* owner = (OakScaledContainerView*)window.contentView.subviews.firstObject;
+	OAK_ASSERT([owner isKindOfClass:[OakScaledContainerView class]]);
+
+	OakScaledContainerView* accessory = [[OakScaledContainerView alloc] initWithContentView:content()];
+	accessory.resizesWindow = NO;
+	NSTitlebarAccessoryViewController* controller = [[NSTitlebarAccessoryViewController alloc] init];
+	controller.view = accessory;
+	[accessory setFrameSize:accessory.intrinsicContentSize];
+	[window addTitlebarAccessoryViewController:controller];
+	[window layoutIfNeeded];
+
+	OakSetUIFontScaleFactor(2);
+	[window layoutIfNeeded];
+	CGFloat ownerScale = owner.effectiveScale, accessoryScale = accessory.effectiveScale, accessoryHeight = NSHeight(accessory.frame);
+	OakSetUIFontScaleFactor(1); // before the assertions: a failed one returns, and the next test would see the scale
+	[window close];
+
+	OAK_ASSERT_GT(ownerScale, 1.0);
+	OAK_ASSERT_LT(ownerScale, 2.0);
+	OAK_ASSERT_EQ(accessoryScale, ownerScale);
+	OAK_ASSERT_EQ(accessoryHeight, ceil(50 * ownerScale));
+}
+
+// A borderless window has no title bar to hold accessories, and asking it
+// for them raises. The pasteboard selector lives in one.
+void test_container_in_borderless_window ()
+{
+	inject(@2);
+	NSRect visible = NSScreen.mainScreen.visibleFrame;
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(visible) + 100, NSMinY(visible) + 350, 300, 150) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+	OakSetScaledWindowContentView(window, content()); // raised NSInternalInconsistencyException before the guard
+	[window layoutIfNeeded];
+	NSRect rect = [window contentRectForFrameRect:window.frame];
+	OAK_ASSERT_EQ(NSWidth(rect), 600.0);
+	OAK_ASSERT_EQ(NSHeight(rect), 300.0);
+	[window close];
+	inject(nil);
+}
+
+// A xib-built content view lays its subviews out with autoresizing masks
+// and has no constraints, so its fitting size says nothing: its own frame
+// is its design size. A window restored smaller than that (Jump to Line
+// had a 191 × 71 saved frame for a 269 × 102 panel) must not squeeze it,
+// which collapses the autoresizing subviews; the window grows instead.
+void test_autoresizing_content_keeps_its_design_size ()
+{
+	inject(nil);
+	[NSUserDefaults.standardUserDefaults removeObjectForKey:kUserDefaultsUIFontScaleFactorKey];
+	NSRect visible = NSScreen.mainScreen.visibleFrame;
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(visible) + 100, NSMinY(visible) + 350, 191, 71) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable) backing:NSBackingStoreBuffered defer:NO];
+	NSView* xibLike = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 269, 102)];
+	NSButton* button = [[NSButton alloc] initWithFrame:NSMakeRect(150, 12, 105, 32)];
+	button.autoresizingMask = NSViewMinXMargin; // sticks to the right edge, as in the xib
+	[xibLike addSubview:button];
+
+	OakSetScaledWindowContentView(window, xibLike);
+	[window layoutIfNeeded];
+	OAK_ASSERT_EQ(NSWidth(xibLike.frame), 269.0);
+	OAK_ASSERT_EQ(NSHeight(xibLike.frame), 102.0);
+	OAK_ASSERT_EQ(NSMinX(button.frame), 150.0); // never squeezed, so never moved
+	NSRect content = [window contentRectForFrameRect:window.frame];
+	OAK_ASSERT_EQ(NSWidth(content), 269.0);  // the window grew to the design size
+	OAK_ASSERT_EQ(NSHeight(content), 102.0);
+
+	OakSetUIFontScaleFactor(2);
+	[window layoutIfNeeded];
+	content = [window contentRectForFrameRect:window.frame];
+	OAK_ASSERT_EQ(NSWidth(content), 538.0);
+	OAK_ASSERT_EQ(NSWidth(xibLike.frame), 269.0);
+	OAK_ASSERT_EQ(NSMinX(button.frame), 150.0);
 	OakSetUIFontScaleFactor(1);
 	[window close];
 }

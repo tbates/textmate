@@ -5,6 +5,7 @@
 */
 
 #import "OakPasteboardSelector.h"
+#import "OakScaledContainerView.h"
 #import "OakAppKit.h"
 #import <ns/ns.h>
 #import <oak/oak.h>
@@ -282,6 +283,12 @@ static size_t line_count (std::string const& text)
 {
 	static OakPasteboardSelector* sharedInstance = [self new];
 	return sharedInstance;
+}
+
+- (void)windowDidLoad
+{
+	[super windowDidLoad];
+	OakSetScaledWindowContentView(self.window, self.window.contentView); // zoomed by the UI scale; the caller’s width is in screen points
 }
 
 - (id)init

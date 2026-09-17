@@ -102,6 +102,11 @@ static NSString* const kVariableKeyValue   = @"value";
 	return tableColumn;
 }
 
+- (BOOL)isResizable
+{
+	return YES; // the list grows with the window
+}
+
 - (void)loadView
 {
 	NSTableColumn* enabledTableColumn = [self columnWithIdentifier:kVariableKeyEnabled title:@""              editable:YES width:16  resizingMask:NSTableColumnNoResizing];

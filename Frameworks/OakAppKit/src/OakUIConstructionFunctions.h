@@ -27,10 +27,11 @@ CGFloat OakUIFontScaleFactor ();
 void OakSetUIFontScaleFactor (CGFloat scale);
 NSFont* OakScaledUIFont (NSFont* base);
 CGFloat OakScaledUIMetric (CGFloat metric);
-NSImage* OakScaledUIImage (NSImage* base); // a copy of base at base.size × scale; base (often a shared named image) is left alone
+NSImage* OakScaledUIImage (NSImage* base); // a copy of base at base.size × scale, or for a system symbol a symbol at 13 × scale pt; base (often a shared named image) is left alone
 CGFloat OakUIScaleThatFits (NSSize designSize, NSSize availableSize, CGFloat scale); // scale, reduced (never below 1) so designSize × result fits availableSize
 
-NSFont* OakStatusBarFont ();
+NSFont* OakStatusBarFont ();     // OakStatusBarBaseFont() × the UI scale
+NSFont* OakStatusBarBaseFont (); // for text inside an OakScaledContainerView, which zooms it
 NSFont* OakControlFont ();
 
 NSTextField* OakCreateLabel (NSString* label = @"", NSFont* font = nil, NSTextAlignment alignment = NSTextAlignmentLeft, NSLineBreakMode lineBreakMode = NSLineBreakByTruncatingMiddle);

@@ -2,6 +2,7 @@
 #import <OakFoundation/OakHistoryList.h>
 #import <OakFoundation/OakFoundation.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
+#import <OakAppKit/OakScaledContainerView.h>
 #import <OakTextView/OakTextView.h>
 
 static NSString* const kUserDefaultsFilterOutputType = @"filterOutputType";
@@ -81,7 +82,7 @@ static NSString* const kUserDefaultsFilterOutputType = @"filterOutputType";
 			@"cancel":       self.cancelButton,
 		};
 
-		NSView* contentView = self.window.contentView;
+		NSView* contentView = [[NSView alloc] initWithFrame:NSZeroRect];
 		OakAddAutoLayoutViewsToSuperview([views allValues], contentView);
 
 		CONSTRAINT(@"H:|-[commandLabel]-[command(>=250)]-|", NSLayoutFormatAlignAllBaseline);
@@ -90,7 +91,8 @@ static NSString* const kUserDefaultsFilterOutputType = @"filterOutputType";
 		CONSTRAINT(@"V:|-[command]-[result]", NSLayoutFormatAlignAllLeft);
 		CONSTRAINT(@"V:[result]-[execute]-|", 0);
 
-		[self.window.contentView addConstraints:_myConstraints];
+		[contentView addConstraints:_myConstraints];
+		OakSetScaledWindowContentView(self.window, contentView); // zoomed by the UI scale
 		self.window.defaultButtonCell = self.executeButton.cell;
 
 		self.outputType = (output::type)[NSUserDefaults.standardUserDefaults integerForKey:kUserDefaultsFilterOutputType];

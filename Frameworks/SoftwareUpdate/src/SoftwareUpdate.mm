@@ -5,6 +5,7 @@
 #import <OakAppKit/OakSound.h>
 #import <OakAppKit/OakTransitionViewController.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
+#import <OakAppKit/OakScaledContainerView.h>
 #import <Security/Security.h>
 #import <WebKit/WebKit.h>
 
@@ -801,7 +802,12 @@ static BOOL OakBundleIsSignedByTeam (NSURL* appURL, NSString* expectedTeamID)
 
 - (void)runModalWithCompletionHandler:(BOOL(^)(NSModalResponse))completionHandler
 {
- 	NSWindow* window = [NSPanel windowWithContentViewController:self];
+	// Not windowWithContentViewController: the view goes into an
+	// OakScaledContainerView so the dialog zooms with the UI scale. The view
+	// controller still gets its appearance callbacks from its view’s window.
+	NSWindow* window = [[NSPanel alloc] initWithContentRect:NSZeroRect styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+	window.releasedWhenClosed = NO;
+	OakSetScaledWindowContentView(window, self.view);
 
 	window.animationBehavior       = NSWindowAnimationBehaviorAlertPanel;
 	window.excludedFromWindowsMenu = YES;
@@ -815,7 +821,7 @@ static BOOL OakBundleIsSignedByTeam (NSURL* appURL, NSString* expectedTeamID)
 	if(_releaseNotesBox)
 	{
 		window.styleMask      |= NSWindowStyleMaskResizable;
-		window.contentMinSize  = self.view.fittingSize;
+		window.contentMinSize  = window.contentView.fittingSize; // the zoomed view
 
 		// A resizable titled window grows the three title-bar buttons, two of
 		// them disabled; this is still an alert, so keep the title bar bare.

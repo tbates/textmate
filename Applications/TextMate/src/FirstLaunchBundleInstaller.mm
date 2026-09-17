@@ -2,6 +2,7 @@
 #import <BundlesManager/BundlesManager.h>
 #import <BundlesManager/BundleRegistry.h>
 #import <BundlesManager/BundleSpec.h>
+#import <OakAppKit/OakScaledContainerView.h>
 
 static NSString* const kColumnCheck    = @"check";
 static NSString* const kColumnName     = @"name";
@@ -117,8 +118,6 @@ static FirstLaunchBundleInstaller* sActiveInstaller;
 - (void)buildContentView
 {
 	NSView* root = [[NSView alloc] initWithFrame:NSZeroRect];
-	root.translatesAutoresizingMaskIntoConstraints = NO;
-	self.window.contentView = root;
 
 	NSTextField* title = [NSTextField labelWithString:@"TextMate ships a curated set of bundles for common languages and tools."];
 	title.font = [NSFont boldSystemFontOfSize:13];
@@ -218,6 +217,8 @@ static FirstLaunchBundleInstaller* sActiveInstaller;
 
 		[scroll.bottomAnchor constraintEqualToAnchor:_installButton.topAnchor constant:-16],
 	]];
+
+	OakSetScaledWindowContentView(self.window, root); // zoomed by the UI scale
 }
 
 - (void)show

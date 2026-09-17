@@ -56,6 +56,33 @@ Possible to enter e.g. `main.{cc,h}` in a Save As dialog for brace expansion (sa
 
 Using ⌘T with find clipboard containing `«file»:«line»` will use that as default text.
 
+## Interface Scale
+
+The window chrome — tab bar, status bars, file browser, Find, the choosers, the dialogs and Preferences — can be scaled independently of the editor font, from View → Font:
+
+ * Bigger Interface: ⌃⌘=
+ * Smaller Interface: ⌃⌘−
+ * Default Interface Size: ⌃⌘0
+
+Each step is 0.1, from 0.8 to 3.0. The change applies at once, and the setting is kept across launches. The menu bar, alerts, the Open and Save panels, context menus and the Preferences toolbar are drawn by macOS at the system size and do not follow.
+
+The scale can also be set from a terminal (any value outside 0.8–3.0 is clamped, and the key is removed when the scale returns to 1):
+
+	defaults write com.macromates.TextMate uiFontScaleFactor 1.5
+
+These older keys are still honoured. Those marked “× scale” give the base size that the interface scale multiplies:
+
+	defaults write com.macromates.TextMate statusBarFontSize 13                          # status bar font, default 12 (× scale)
+	defaults write com.macromates.TextMate OakBundleManagerDisambiguateMenuFontSize 12   # menu shown when several bundle items share a key, default 11 (× scale)
+	defaults write com.macromates.TextMate tabItemMinWidth 120                           # narrowest tab, default 120 (× scale)
+	defaults write com.macromates.TextMate tabItemMaxWidth 250                           # widest tab, default 250 (× scale)
+	defaults write com.macromates.TextMate searchResultsFontName Menlo                   # Find results font, default the control font
+	defaults write com.macromates.TextMate searchResultsFontSize -float 12               # Find results size, default 11 (the whole Find window zooms with the scale)
+	defaults write com.macromates.TextMate lineNumberFontName Menlo                      # gutter font, default the editor font
+	defaults write com.macromates.TextMate lineNumberScaleFactor -float 1                # gutter size relative to the editor font, default 0.8 (editor zoom, not the interface scale)
+
+Keys named `OakScaledContainerScale …` are written by TextMate next to each zoomed window’s saved frame and are not meant to be edited.
+
 ## Syntax / API
 
 * [Bundle Dependencies][]

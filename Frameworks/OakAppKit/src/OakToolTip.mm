@@ -1,4 +1,5 @@
 #import "OakToolTip.h"
+#import "OakUIConstructionFunctions.h"
 #import <oak/debug.h>
 #import <oak/oak.h>
 
@@ -34,7 +35,7 @@ static __weak OakToolTip* LastToolTip;
 		NSFontDescriptor* descriptor = [defaultFont.fontDescriptor fontDescriptorByAddingAttributes:@{
 			NSFontFeatureSettingsAttribute: @[ @{ NSFontFeatureTypeIdentifierKey: @(kNumberSpacingType), NSFontFeatureSelectorIdentifierKey: @(kMonospacedNumbersSelector) } ]
 		}];
-		defaultFont = [NSFont fontWithDescriptor:descriptor size:0];
+		defaultFont = OakScaledUIFont([NSFont fontWithDescriptor:descriptor size:0]); // a tool tip is a new window each time, so this is enough
 
 		[self setHasShadow:YES];
 		[self setLevel:NSStatusWindowLevel];

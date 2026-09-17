@@ -108,6 +108,7 @@ static NSButton* OakCreateImageButton (NSImage* image)
 - (void)updateImages
 {
 	[[self.actionsPopUpButton cell] menuItem].image = OakScaledUIImage(_actionsBaseImage);
+	self.actionsPopUpButton.menu.font = OakScaledUIFont([NSFont menuFontOfSize:0]); // the dropped-down menu
 }
 
 - (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification

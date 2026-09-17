@@ -15,7 +15,11 @@
 - (instancetype)initWithContentView:(NSView*)contentView;
 @property (nonatomic, readonly) NSView* contentView;
 @property (nonatomic, readonly) CGFloat effectiveScale;
+@property (nonatomic) BOOL resizesWindow; // YES: the window is resized with the scale and the applied scale saved next to its frame. NO for a second container in the same window, e.g. in its title bar: once in the window it follows the scale of the window’s container.
 @end
 
 // Installs contentView in a window inside an OakScaledContainerView.
 void OakSetScaledWindowContentView (NSWindow* window, NSView* contentView);
+
+// The scale of the OakScaledContainerView that view is inside, or 1: the window points per point of view.
+CGFloat OakScaledContainerScaleForView (NSView* view);

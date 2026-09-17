@@ -259,6 +259,11 @@ static NSUserInterfaceItemIdentifier const kTableColumnIdentifierActions     = @
 	return tableColumn;
 }
 
+- (BOOL)isResizable
+{
+	return YES; // the list grows with the window
+}
+
 - (void)loadView
 {
 	NSMutableSet* categories = [NSMutableSet set];

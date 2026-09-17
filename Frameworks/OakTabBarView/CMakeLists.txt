@@ -7,3 +7,5 @@ target_link_libraries(OakTabBarView PUBLIC OakFoundation OakAppKit TMFileReferen
   "-framework Cocoa")
 target_include_directories(OakTabBarView PRIVATE
   $<TARGET_PROPERTY:Preferences,INTERFACE_INCLUDE_DIRECTORIES>)
+
+textmate_add_tests(OakTabBarView)

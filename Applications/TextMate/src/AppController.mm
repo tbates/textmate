@@ -36,6 +36,7 @@
 #import <oak/oak.h>
 #import <scm/scm.h>
 #import <text/types.h>
+#import <OakAppKit/OakScaledContainerView.h>
 
 void OakOpenDocuments (NSArray* paths, BOOL treatFilePackageAsFolder)
 {
@@ -487,6 +488,8 @@ BOOL HasDocumentWindow (NSArray* windows)
 
 - (void)applicationWillFinishLaunching:(NSNotification*)aNotification
 {
+	OakSetScaledWindowContentView(goToLinePanel, goToLinePanel.contentView); // the Jump to Line panel from MainMenu.xib, zoomed by the UI scale
+
 	if(NSMenu* menu = [self mainMenu])
 		NSApp.mainMenu = menu;
 

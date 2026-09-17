@@ -82,3 +82,15 @@ void test_create_glob ()
 	OAK_ASSERT_EQ(settings_for_path("bar.html.erb"     ).get(kSettingsFileTypeKey, "unset"), "*.html.erb");
 	OAK_ASSERT_EQ(settings_for_path("bar.dmg"          ).get(kSettingsFileTypeKey, "unset"), "*.dmg");
 }
+
+// The bytes sniffed for a first-line match are the first line without its
+// newline, in a buffer of exactly that size. A first-line pattern that goes
+// on to a second line (the property list grammar’s does) made the regex
+// engine read the byte after the buffer; the sanitizer aborted on it when
+// opening any XML property list.
+void test_first_line_match_at_end_of_bytes ()
+{
+	std::string const firstLine = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
+	std::string const type = file::type_from_bytes(io::bytes_ptr(new io::bytes_t(firstLine)));
+	OAK_ASSERT(type == NULL_STR || type.find("xml") != std::string::npos); // either is fine; reaching here is the point
+}

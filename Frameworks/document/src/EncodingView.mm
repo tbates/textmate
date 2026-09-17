@@ -2,6 +2,7 @@
 #import <OakFoundation/NSString Additions.h>
 #import <OakAppKit/OakEncodingPopUpButton.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
+#import <OakAppKit/OakScaledContainerView.h>
 #import <text/hexdump.h>
 #import <text/utf8.h>
 #import <text/transcode.h>
@@ -205,12 +206,11 @@ static NSTextView* MyCreateTextView ()
 
 		EncodingContentView* contentView = [[EncodingContentView alloc] initWithFrame:NSZeroRect];
 		[contentView setDelegate:self];
-		[contentView setAutoresizingMask:NSViewWidthSizable|NSViewHeightSizable];
 		self.contentView = contentView;
 
 		OakAddAutoLayoutViewsToSuperview([[self allViews] allValues], contentView);
 
-		[self.window.contentView addSubview:contentView];
+		OakSetScaledWindowContentView(self.window, contentView); // zoomed by the UI scale
 		self.window.defaultButtonCell = self.openButton.cell;
 		self.window.delegate = self;
 

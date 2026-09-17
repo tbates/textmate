@@ -4,6 +4,7 @@
 #import <OakAppKit/NSColor Additions.h>
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
+#import <OakAppKit/OakScaledContainerView.h>
 #import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
 #import <ns/ns.h>
@@ -119,6 +120,7 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 @interface OakChooser () <NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate>
 {
 	NSTitlebarAccessoryViewController* _accessoryViewController;
+	NSView*             _contentView; // the window’s content, zoomed by an OakScaledContainerView
 
 	NSSearchField*      _searchField;
 	NSScrollView*       _scrollView;
@@ -133,7 +135,7 @@ static void* kFirstResponderObserverContext = &kFirstResponderObserverContext;
 
 static NSFont* OakChooserItemCountFont ()
 {
-	NSFontDescriptor* descriptor = [OakStatusBarFont().fontDescriptor fontDescriptorByAddingAttributes:@{
+	NSFontDescriptor* descriptor = [OakStatusBarBaseFont().fontDescriptor fontDescriptorByAddingAttributes:@{
 		NSFontFeatureSettingsAttribute: @[ @{ NSFontFeatureTypeIdentifierKey: @(kNumberSpacingType), NSFontFeatureSelectorIdentifierKey: @(kMonospacedNumbersSelector) } ]
 	}];
 	return [NSFont fontWithDescriptor:descriptor size:0];
@@ -152,8 +154,13 @@ static NSFont* OakChooserItemCountFont ()
 		self.window.frameAutosaveName = NSStringFromClass([self class]);
 		self.window.delegate          = self;
 
+		// The list and footer are zoomed as a whole by the UI scale (see
+		// OakScaledContainerView.h); the title bar accessory gets its own
+		// container in addTitlebarAccessoryView:.
+		_contentView = [[NSView alloc] initWithFrame:NSZeroRect];
+		OakSetScaledWindowContentView(self.window, _contentView);
+
 		[self.window addObserver:self forKeyPath:@"firstResponder" options:NSKeyValueObservingOptionOld|NSKeyValueObservingOptionNew context:kFirstResponderObserverContext];
-		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(uiFontScaleFactorDidChange:) name:OakUIFontScaleFactorDidChangeNotification object:nil];
 	}
 	return self;
 }
@@ -163,7 +170,6 @@ static NSFont* OakChooserItemCountFont ()
 	_searchField.delegate = nil;
 	[_searchField unbind:NSValueBinding];
 	[self.window removeObserver:self forKeyPath:@"firstResponder" context:kFirstResponderObserverContext];
-	[NSNotificationCenter.defaultCenter removeObserver:self];
 
 	_tableView.target     = nil;
 	_tableView.dataSource = nil;
@@ -176,11 +182,12 @@ static NSFont* OakChooserItemCountFont ()
 
 - (void)addTitlebarAccessoryView:(NSView*)titlebarView
 {
-	titlebarView.translatesAutoresizingMaskIntoConstraints = NO;
+	OakScaledContainerView* container = [[OakScaledContainerView alloc] initWithContentView:titlebarView];
+	container.resizesWindow = NO; // the content container owns the window frame
 
 	_accessoryViewController = [[NSTitlebarAccessoryViewController alloc] init];
-	_accessoryViewController.view = titlebarView;
-	[_accessoryViewController.view setFrameSize:titlebarView.fittingSize];
+	_accessoryViewController.view = container;
+	[_accessoryViewController.view setFrameSize:container.intrinsicContentSize];
 	[self.window addTitlebarAccessoryViewController:_accessoryViewController];
 }
 
@@ -240,7 +247,7 @@ static NSFont* OakChooserItemCountFont ()
 		_scrollView.borderType            = NSNoBorder;
 		_scrollView.documentView          = self.tableView;
 
-		NSView* contentView = self.window.contentView;
+		NSView* contentView = _contentView;
 		_scrollView.translatesAutoresizingMaskIntoConstraints = NO;
 		[contentView addSubview:_scrollView positioned:NSWindowBelow relativeTo:nil];
 
@@ -260,19 +267,13 @@ static NSFont* OakChooserItemCountFont ()
 		_statusTextField.bordered        = NO;
 		_statusTextField.drawsBackground = NO;
 		_statusTextField.editable        = NO;
-		_statusTextField.font            = OakStatusBarFont();
+		_statusTextField.font            = OakStatusBarBaseFont();
 		_statusTextField.selectable      = NO;
 		[[_statusTextField cell] setLineBreakMode:NSLineBreakByTruncatingMiddle];
 		[_statusTextField setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[_statusTextField setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
 	}
 	return _statusTextField;
-}
-
-- (void)uiFontScaleFactorDidChange:(NSNotification*)aNotification
-{
-	_statusTextField.font    = OakStatusBarFont();
-	_itemCountTextField.font = OakChooserItemCountFont();
 }
 
 - (NSTextField*)itemCountTextField
@@ -284,7 +285,7 @@ static NSFont* OakChooserItemCountFont ()
 		_itemCountTextField.bordered        = NO;
 		_itemCountTextField.drawsBackground = NO;
 		_itemCountTextField.editable        = NO;
-		_itemCountTextField.font            = OakStatusBarFont();
+		_itemCountTextField.font            = OakStatusBarBaseFont();
 		_itemCountTextField.selectable      = NO;
 		[_itemCountTextField setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
 		_itemCountTextField.font = OakChooserItemCountFont();
@@ -302,7 +303,7 @@ static NSFont* OakChooserItemCountFont ()
 		if(@available(macos 10.14, *))
 			_footerView.material = NSVisualEffectMaterialHeaderView;
 
-		NSView* contentView = self.window.contentView;
+		NSView* contentView = _contentView;
 		contentView.wantsLayer = YES;
 		_footerView.translatesAutoresizingMaskIntoConstraints = NO;
 		[contentView addSubview:_footerView positioned:NSWindowAbove relativeTo:nil];

@@ -113,13 +113,18 @@ namespace file
 		if(!bytes)
 			return NULL_STR;
 
+		// Onigmo reads the byte after the range for some patterns (the property
+		// list grammar’s ‘.*\n’ on a line without a newline), so search a copy
+		// that has a terminator; the bytes are an exact-size buffer.
+		std::string const content(bytes->begin(), bytes->end());
+
 		std::multimap<ssize_t, bundles::item_ptr> ordering;
 		for(auto const& item : bundles::query(bundles::kFieldAny, NULL_STR, scope::wildcard, bundles::kItemTypeGrammar))
 		{
 			for(auto const& pattern : item->values_for_field(bundles::kFieldGrammarFirstLineMatch))
 			{
-				char const* first = bytes->begin();
-				char const* last  = bytes->end();
+				char const* first = content.data();
+				char const* last  = first + content.size();
 				if(pattern.find("(?m)") == std::string::npos)
 					last = first_n_lines(first, last, lines_matched_by_regexp(pattern));
 

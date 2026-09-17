@@ -8,3 +8,5 @@ target_link_libraries(OakTextView PUBLIC
   crash document editor file io layout ns scm settings text theme
   "-framework Cocoa")
 
+
+textmate_add_tests(OakTextView)

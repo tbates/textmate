@@ -3,6 +3,7 @@
 #import "OakAppKit.h"
 #import "OakScopeBarView.h"
 #import "OakUIConstructionFunctions.h"
+#import "OakScaledContainerView.h"
 #import "OakSyntaxFormatter.h"
 #import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
@@ -65,6 +66,7 @@ static NSUserInterfaceItemIdentifier const kTableColumnIdentifierFlag = @"flag";
 @interface OakPasteboardChooser () <NSWindowDelegate, NSTextFieldDelegate, NSTableViewDelegate, NSTableViewDataSource, NSSearchFieldDelegate>
 {
 	NSTitlebarAccessoryViewController* _accessoryViewController;
+	NSView* _contentView; // the window’s content, zoomed by an OakScaledContainerView
 	OakScopeBarViewController* _scopeBar;
 	BOOL _skipUpdatePasteboard;
 	NSButton* _actionButton;
@@ -94,6 +96,10 @@ static NSMutableDictionary* SharedChoosers;
 	if(self = [super initWithWindow:[[NSPanel alloc] initWithContentRect:NSMakeRect(600, 700, 400, 500) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO]])
 	{
 		_pasteboard = aPasteboard;
+
+		// Zoomed as a whole by the UI scale, like OakChooser.
+		_contentView = [[NSView alloc] initWithFrame:NSZeroRect];
+		OakSetScaledWindowContentView(self.window, _contentView);
 
 		NSString* windowTitle = @"Clipboard History";
 		NSString* actionName  = @"Paste";
@@ -225,11 +231,12 @@ static NSMutableDictionary* SharedChoosers;
 
 - (void)addTitlebarAccessoryView:(NSView*)titlebarView
 {
-	titlebarView.translatesAutoresizingMaskIntoConstraints = NO;
+	OakScaledContainerView* container = [[OakScaledContainerView alloc] initWithContentView:titlebarView];
+	container.resizesWindow = NO; // the content container owns the window frame
 
 	_accessoryViewController = [[NSTitlebarAccessoryViewController alloc] init];
-	_accessoryViewController.view = titlebarView;
-	[_accessoryViewController.view setFrameSize:titlebarView.fittingSize];
+	_accessoryViewController.view = container;
+	[_accessoryViewController.view setFrameSize:container.intrinsicContentSize];
 	[self.window addTitlebarAccessoryViewController:_accessoryViewController];
 }
 
@@ -318,7 +325,7 @@ static NSMutableDictionary* SharedChoosers;
 		_scrollView.borderType            = NSNoBorder;
 		_scrollView.documentView          = self.tableView;
 
-		NSView* contentView = self.window.contentView;
+		NSView* contentView = _contentView;
 		_scrollView.translatesAutoresizingMaskIntoConstraints = NO;
 		[contentView addSubview:_scrollView positioned:NSWindowBelow relativeTo:nil];
 
@@ -339,7 +346,7 @@ static NSMutableDictionary* SharedChoosers;
 		if(@available(macos 10.14, *))
 			_footerView.material = NSVisualEffectMaterialHeaderView;
 
-		NSView* contentView = self.window.contentView;
+		NSView* contentView = _contentView;
 		contentView.wantsLayer = YES;
 		_footerView.translatesAutoresizingMaskIntoConstraints = NO;
 		[contentView addSubview:_footerView positioned:NSWindowAbove relativeTo:nil];
