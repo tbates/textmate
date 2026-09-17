@@ -7,7 +7,7 @@ require 'digest/md5'
 require 'fileutils'
 require 'net/https'
 require 'uri'
-require 'cgi'
+require 'cgi/escape' # only escapeHTML is used; Ruby 4.0 dropped the rest of cgi
 require 'date'
 require 'json'
 require 'set'

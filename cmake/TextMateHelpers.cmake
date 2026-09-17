@@ -193,7 +193,9 @@ function(textmate_markdown TARGET SRC DEST_DIR WRAP)
   add_custom_command(
     OUTPUT "${_out}"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/md/${DEST_DIR}"
-    COMMAND "${CMAKE_SOURCE_DIR}/bin/gen_html" ${_flags} "${SRC}" > "${_out}"
+    # gen_html writes the file itself (atomically), so a failed run cannot
+    # leave a truncated page that the next build treats as up to date.
+    COMMAND "${CMAKE_SOURCE_DIR}/bin/gen_html" ${_flags} -o "${_out}" "${SRC}"
     DEPENDS "${SRC}" "${CMAKE_SOURCE_DIR}/bin/gen_html"
     # Contributions.md does `require File.join(File.dirname(__FILE__),
     # 'bin/gen_credits')`, which resolves relative to the working directory.
