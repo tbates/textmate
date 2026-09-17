@@ -315,9 +315,12 @@ namespace bundles
 			{
 				// Drawn state first: stopping at an entry must not count
 				// it, or slot 0 resolves one past the anchor.
-				bool draws = false;
+				// Disabled items still draw their row (greyed), so they
+				// still consume their pane slot; only deleted and hidden
+				// entries are undrawn.
+			bool draws = false;
 				if(item_ptr item = lookup(oak::uuid_t(entry)))
-					draws = !is_deleted(item) && !is_disabled(item) && !item->hidden_from_user();
+					draws = !is_deleted(item) && !item->hidden_from_user();
 				if(draws && drawn == slot)
 					break;
 				if(draws)

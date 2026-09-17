@@ -33,7 +33,7 @@
 @property (nonatomic, weak) BundleEditor* editor;
 @end
 
-@interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate, NSMenuDelegate, NSTextFieldDelegate>
+@interface BundleEditor () <NSWindowDelegate, OakTextViewDelegate>
 {
 	NSViewController*      _browserViewController;
 	NSViewController*      _documentViewController;
@@ -103,11 +103,11 @@
 - (void)keyDown:(NSEvent*)event
 {
 	// Only real modifiers disqualify: the device-independent mask also
-	// carries hardware bits (Function, NumericPad) that arrows may arrive
-	// with, and those must not swallow the press.
-	static NSEventModifierFlags const kRealModifiers = NSEventModifierFlagCapsLock
-		| NSEventModifierFlagShift | NSEventModifierFlagControl
-		| NSEventModifierFlagOption | NSEventModifierFlagCommand;
+	// carries hardware bits (Function, NumericPad, CapsLock) that arrows
+	// may arrive with, and those must not swallow the press.
+	static NSEventModifierFlags const kRealModifiers = NSEventModifierFlagShift
+		| NSEventModifierFlagControl | NSEventModifierFlagOption
+		| NSEventModifierFlagCommand;
 	if((event.keyCode == 124 /* right arrow */ || event.keyCode == 123 /* left arrow */) && (event.modifierFlags & kRealModifiers) == 0)
 	{
 		BOOL const handled = event.keyCode == 124

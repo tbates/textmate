@@ -779,6 +779,14 @@ void test_menu_index_for_pane_slot ()
 	OAK_ASSERT(at(0, { to_s(firstUUID) }) == std::make_pair(1ul, 1ul));
 	OAK_ASSERT(at(1, { to_s(firstUUID) }) == std::make_pair(3ul, 2ul));
 
+	// A disabled item still draws its row (greyed), so it still consumes
+	// its pane slot: with first disabled, slot 1 sits between first and
+	// the divider rather than one row low.
+	OAK_ASSERT(first->initialize({{ bundles::kFieldIsDisabled, plist::any_t(true) }}));
+	OAK_ASSERT(at(0) == std::make_pair(0ul, 0ul));
+	OAK_ASSERT(at(1) == std::make_pair(2ul, 2ul));
+	OAK_ASSERT(at(2) == std::make_pair(4ul, 3ul));
+
 	// This test replaces the shared index: rebuild the standard fixtures for
 	// whatever runs after it in the suite.
 	setup_fixtures();

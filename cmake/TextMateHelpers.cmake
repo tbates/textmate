@@ -127,7 +127,7 @@ function(textmate_add_tests FRAMEWORK_TARGET)
   # SERIAL opts out of the parallel runner for suites whose tests mutate
   # shared global state and are only safe run one at a time.
   cmake_parse_arguments(_TAT "SERIAL" "" "" ${ARGN})
-  
+
   file(GLOB _test_sources CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/t_*.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/t_*.mm")
