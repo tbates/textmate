@@ -2,7 +2,7 @@
 require 'pathname'
 require 'erb'
 
-user_code = ""
+user_code = String.new # mutated below; a literal will be frozen in a future Ruby
 setup, tests, benchmarks = [ ], [ ], [ ]
 
 ARGV.each do |file|
