@@ -4,6 +4,8 @@
 // forward to such a page asks for its URL again, so the pages last served are
 // kept here and replayed. Least recently used pages are dropped past capacity.
 @interface OakHTMLOutputPageCache : NSObject
+// The page's identity: its URL without the fragment, which scripts change and reloads carry along
++ (NSString*)keyForURL:(NSURL*)aURL;
 + (instancetype)sharedCache;
 - (instancetype)initWithCapacity:(NSUInteger)capacity;
 - (void)setData:(NSData*)data forKey:(NSString*)key;

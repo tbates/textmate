@@ -19,7 +19,7 @@
 
 - (void)webView:(WKWebView*)webView startURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
 {
-	NSString* urlString = urlSchemeTask.request.URL.absoluteString;
+	NSString* urlString = [OakHTMLOutputPageCache keyForURL:urlSchemeTask.request.URL]; // a reload carries the fragment a script set
 	OakHTMLOutputRequestMetadata* metadata = [OakHTMLOutputRequestMetadata metadataForURLString:urlString];
 
 	if(!metadata || !metadata.fileHandle)
@@ -107,7 +107,7 @@
 	NSValue* taskKey = [NSValue valueWithNonretainedObject:urlSchemeTask];
 	_stoppedTasks[taskKey] = @YES;
 
-	NSString* urlString = urlSchemeTask.request.URL.absoluteString;
+	NSString* urlString = [OakHTMLOutputPageCache keyForURL:urlSchemeTask.request.URL];
 	OakHTMLOutputRequestMetadata* metadata = [OakHTMLOutputRequestMetadata metadataForURLString:urlString];
 	if(pid_t pid = metadata.processIdentifier.intValue)
 		oak::kill_process_group_in_background(pid);
