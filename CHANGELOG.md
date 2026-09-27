@@ -2,6 +2,27 @@ Title: Release Notes
 
 # Changes
 
+## 2026-09-27 (v2.4.0-undead)
+
+The command output window browses like a browser, the Bundle Editor reorders by drag and drop, and the build runs on Ruby 4. See [all changes since v2.3.0-undead](https://github.com/textmatelives/textmate/compare/v2.3.0-undead...v2.4.0-undead).
+
+### HTML Output
+
+* **The preview follows links.** Clicking a relative link in a Markdown preview used to replace the pane with the target file as raw text, and a fragment link did the same with the document itself, because every local file was handed to the web view. A clicked link to a file the web view cannot render is now offered to the command that produced the page: when that command takes a whole document and its scope matches the target, as Show Preview does for another Markdown file, it re-runs on the target and renders it in the same window as a new page. Back and forward work, the last 32 pages served are kept so history can replay them once a command’s stream is spent, each page brings back the environment it was produced with, and refreshes follow the page being shown. Files the command cannot take open in the editor; a fragment scrolls in place; HTML, images and PDF load as before. Running the command again from another document steers the existing window instead of opening a second one. ([#86](https://github.com/textmatelives/textmate/issues/86), [#87](https://github.com/textmatelives/textmate/pull/87), `a7472d4a`)
+* **Fixed: an auto-refresh left a page history could not return to.** Refreshing loaded an HTML string, which replaced the history entry with a document WebKit cannot revisit; going back to it failed with “frame load interrupted”, an error the output view swallowed while leaving the progress bar running. A refreshed page is now re-served under its own URL, and an interrupted load resets the status bar. ([#87](https://github.com/textmatelives/textmate/pull/87), `a7472d4a`)
+
+### Bundle Editor
+
+* **Drag-and-drop reordering, Miller-column arrows, dividers and a category dialog.** Items can be reordered by dragging within a bundle’s menu, new items insert at the selection instead of at the end, dividers can be inserted from the context menu, and categories are added, renamed and deleted through a dialog. Menu positions are translated from the visible pane rows to the stored menu, with disabled items keeping their slot. Contributed by [@tbates](https://github.com/tbates). ([#64](https://github.com/textmatelives/textmate/issues/64), [#80](https://github.com/textmatelives/textmate/pull/80), `093eed65`, `a32d37ee`)
+
+### Build
+
+* **The build runs on Ruby 2.6 through 4.0.** `bin/gen_html` spawned multimarkdown through `Kernel#open` with a leading `|`, which Ruby 3.3 deprecated and Ruby 4.0 removed, so with a Homebrew Ruby 4 first on `PATH` the About and Help pages failed to build. It now uses `IO.popen` and writes each page next to its target before renaming it into place, so a failed run no longer leaves a truncated page that the next build treats as up to date. Nothing in the build hardcodes `/usr/bin/ruby`. Reported by [@faisal](https://github.com/faisal). ([#83](https://github.com/textmatelives/textmate/issues/83), [#85](https://github.com/textmatelives/textmate/pull/85), `4097c192`)
+
+### Bundles
+
+* **Markdown (GitHub) renders relative links safely.** Relative links resolve against the document, `javascript:`, `data:` and protocol-relative links are dropped. Delivered by bundle auto-update rather than this release. ([GitHub-Markdown.tmbundle#4](https://github.com/textmatelives/GitHub-Markdown.tmbundle/pull/4))
+
 ## 2026-09-14 (v2.3.0-undead)
 
 The interface scales to your display, the update dialog shows what it is offering, and a third update channel carries experiments. Also a pin bump that fixes ⌘/ on multibyte lines, a commit-sheet quit fix, and a warning sweep of the build. See [all changes since v2.2.1-undead](https://github.com/textmatelives/textmate/compare/v2.2.1-undead...v2.3.0-undead).
