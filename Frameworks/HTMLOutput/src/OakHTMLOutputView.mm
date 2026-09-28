@@ -28,9 +28,7 @@
 
 static std::string page_key (NSURL* url)
 {
-	NSURLComponents* components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
-	components.fragment = nil;
-	return std::string(components.URL.absoluteString.UTF8String ?: "");
+	return std::string([OakHTMLOutputPageCache keyForURL:url].UTF8String);
 }
 
 @implementation OakHTMLOutputView

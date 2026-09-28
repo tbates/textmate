@@ -34,3 +34,16 @@ void test_unknown_pages_are_absent ()
 	OakHTMLOutputPageCache* cache = [[OakHTMLOutputPageCache alloc] initWithCapacity:2];
 	OAK_ASSERT([cache dataForKey:@"missing"] == nil);
 }
+
+// A page is one entry whether or not its URL carries a fragment: scripts set location.hash, and a reload then asks for the page with it
+void test_page_keys_ignore_the_fragment ()
+{
+	NSURL* plain    = [NSURL URLWithString:@"x-txmt-filehandle://job/Show%20Preview/2"];
+	NSURL* fragment = [NSURL URLWithString:@"x-txmt-filehandle://job/Show%20Preview/2#scroll_to_here"];
+	OAK_ASSERT([[OakHTMLOutputPageCache keyForURL:fragment] isEqualToString:[OakHTMLOutputPageCache keyForURL:plain]]);
+	OAK_ASSERT([[OakHTMLOutputPageCache keyForURL:plain] isEqualToString:@"x-txmt-filehandle://job/Show%20Preview/2"]);
+
+	OakHTMLOutputPageCache* cache = [[OakHTMLOutputPageCache alloc] initWithCapacity:4];
+	[cache setData:[@"one" dataUsingEncoding:NSUTF8StringEncoding] forKey:[OakHTMLOutputPageCache keyForURL:plain]];
+	OAK_ASSERT([cache dataForKey:[OakHTMLOutputPageCache keyForURL:fragment]] != nil);
+}

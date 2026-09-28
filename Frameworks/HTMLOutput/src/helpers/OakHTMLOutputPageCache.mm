@@ -7,6 +7,13 @@
 	NSMutableDictionary<NSString*, NSData*>* _pages;
 }
 
++ (NSString*)keyForURL:(NSURL*)aURL
+{
+	NSURLComponents* components = [NSURLComponents componentsWithURL:aURL resolvingAgainstBaseURL:NO];
+	components.fragment = nil;
+	return components.URL.absoluteString ?: @"";
+}
+
 + (instancetype)sharedCache
 {
 	static OakHTMLOutputPageCache* cache = [[self alloc] initWithCapacity:32];

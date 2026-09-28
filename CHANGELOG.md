@@ -2,6 +2,18 @@ Title: Release Notes
 
 # Changes
 
+## 2026-09-27 (v2.4.1-undead)
+
+A hotfix: on macOS 27, the preview stopped following edits. See [all changes since v2.4.0-undead](https://github.com/textmatelives/textmate/compare/v2.4.0-undead...v2.4.1-undead).
+
+### HTML Output
+
+* **Fixed: on macOS 27, an auto-refreshing preview never showed the edit.** A refresh re-serves the page under its own URL and reloads it. The Markdown preview sets `location.hash` on its first load, and WebKit on macOS 27 asks for the reload with that fragment attached, where macOS 26 asks with the plain URL. The page cache and the streaming metadata were keyed by the full URL, so the lookup missed and the stale page stayed. Pages are now keyed by their URL without the fragment. Reported by [@dayglojesus](https://github.com/dayglojesus). (`2217d5f9`)
+
+### Bundles
+
+* **Fixed: a new file could be offered with an odd extension.** The extension suggested for an untitled document comes from its grammar’s file types, and the lookup returned whichever entry the field index happened to land on rather than the first, so a new Markdown file was offered as `untitled.markdn`. It now takes the first entry, `md`. (`be39ad4d`)
+
 ## 2026-09-27 (v2.4.0-undead)
 
 The command output window browses like a browser, the Bundle Editor reorders by drag and drop, and the build runs on Ruby 4. See [all changes since v2.3.0-undead](https://github.com/textmatelives/textmate/compare/v2.3.0-undead...v2.4.0-undead).
