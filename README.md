@@ -28,6 +28,16 @@ Long live TextMate!
 
 Grab the latest signed and notarized build from the [Releases page](https://github.com/textmatelives/textmate/releases).
 
+## Update channels
+
+TextMate checks for updates itself. In Preferences → Software Update, "Watch for:" picks what it offers:
+
+- **Normal releases**, the default: stable builds only.
+- **Prereleases**: betas as well as stable builds. When a stable release overtakes the beta you are on, you are offered that.
+- **Experimental builds**: features that may change a lot, or may never ship in a stable release. This channel offers only experimental builds, never a stable one, so switch back to Normal releases when you are done testing.
+
+New prereleases and experimental builds are announced in [Discussions → Announcements](https://github.com/textmatelives/textmate/discussions/categories/announcements).
+
 ## Feedback
 
 For fork-specific bugs, feature requests, and discussion, [file an issue](https://github.com/textmatelives/textmate/issues). Patches are welcome too — [open a pull request](https://github.com/textmatelives/textmate/pulls), with or without a matching issue.
