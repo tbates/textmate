@@ -223,8 +223,12 @@ static NSString* const kRecordingPlaceholderString = @"…";
 		NSFontAttributeName:            OakControlFont()
 	};
 
+	// Center on bounds. visibleRect is the unclipped window in this view's
+	// coordinates, and the bundle editor's properties column does not clip,
+	// so centering on it draws the shortcut several rows below the field.
+	NSRect box = self.bounds;
 	NSSize size = [self.displayString sizeWithAttributes:stringAttributes];
-	[self.displayString drawAtPoint:NSMakePoint(NSMidX([self visibleRect]) - size.width / 2, NSMidY([self visibleRect]) - size.height / 2) withAttributes:stringAttributes];
+	[self.displayString drawAtPoint:NSMakePoint(NSMidX(box) - size.width / 2, NSMidY(box) - size.height / 2) withAttributes:stringAttributes];
 }
 
 - (void)drawFocusRingMask
