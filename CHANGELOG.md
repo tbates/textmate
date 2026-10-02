@@ -2,6 +2,22 @@ Title: Release Notes
 
 # Changes
 
+## 2026-10-01 (v2.4.2-undead)
+
+A crash fix, a Bundle Editor fix and a new variable for commands. See [all changes since v2.4.1-undead](https://github.com/textmatelives/textmate/compare/v2.4.1-undead...v2.4.2-undead).
+
+### Stability
+
+* **Fixed: choosing Ask Siri from the context menu quit TextMate.** When Auto Layout cannot satisfy a set of constraints, AppKit raises an exception, catches it itself, breaks a constraint and carries on. TextMate’s exception handler sees every exception the moment it is thrown and treated this one as fatal. The Ask Siri field in the context menu triggers it on macOS 27.2, and any conflicting constraints would have too. The handler now lets it through, as it already did for the KeyCue menu exception. Reported by [@tbates](https://github.com/tbates) in [#94](https://github.com/textmatelives/textmate/issues/94). (`61069ec0`)
+
+### Bundle Editor
+
+* **Fixed: the Key Equivalent field drew its shortcut below the field.** The field centred its text on the visible rect, which in the new properties column is the whole window. It centres on its own bounds now. Recording a shortcut drew its ellipsis and keys in the wrong place the same way. Fixed by [@tbates](https://github.com/tbates) in [#95](https://github.com/textmatelives/textmate/pull/95). (`882350dc`)
+
+### Commands
+
+* **New: `TM_WRAP_COLUMN`.** Commands now receive the editor’s wrap column: the setting when one is set, otherwise the number of columns that fit the window, which is what Reformat (⌃Q) wraps to. A `.tm_properties` that exports the variable itself keeps its value. Requested by [@tbates](https://github.com/tbates) in [#91](https://github.com/textmatelives/textmate/issues/91). (`89a6519f`)
+
 ## 2026-09-27 (v2.4.1-undead)
 
 A hotfix: on macOS 27, the preview stopped following edits. See [all changes since v2.4.0-undead](https://github.com/textmatelives/textmate/compare/v2.4.0-undead...v2.4.1-undead).
