@@ -266,6 +266,7 @@ struct document_view_t : ng::buffer_api_t
 	{
 		std::map<std::string, std::string> res = _document.variables;
 		res << _editor->editor_variables(scopeAttributes);
+		res["TM_WRAP_COLUMN"] = std::to_string(_layout->effective_wrap_column()); // what Reformat (⌃Q) wraps to
 		return res;
 	}
 
