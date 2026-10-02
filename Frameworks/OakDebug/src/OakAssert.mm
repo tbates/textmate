@@ -2,6 +2,7 @@
 #import <oak/oak.h>
 #import <oak/compat.h>
 #import <text/format.h>
+#import "OakExpectedException.h"
 
 @interface OakExceptionHandlerDelegate : NSObject { }
 @end
@@ -19,6 +20,25 @@ static BOOL IsAppKitMenuAccessibilityCompatibilityException (NSException* except
 	 */
 	return [exception.name isEqualToString:NSInvalidArgumentException] &&
 	       [exception.reason hasPrefix:@"-[NSMenu accessibilityPerformAction:]: unrecognized selector sent to instance "];
+}
+
+static BOOL IsAppKitUnsatisfiableLayoutException (NSException* exception)
+{
+	/*
+	 * When Auto Layout has to break a constraint, AppKit raises this exception
+	 * from LAYOUT_CONSTRAINTS_NOT_SATISFIABLE, catches it, breaks one of the
+	 * constraints and carries on. It happens in views TextMate does not own,
+	 * such as the remote Ask Siri field in the context menu (issue #94).
+	 */
+	return [exception.name isEqualToString:NSGenericException] &&
+	       [exception.reason isEqualToString:@"layout constraints are not satisfiable."];
+}
+
+BOOL OakExceptionIsExpected (NSException* exception)
+{
+	return [exception.name isEqualToString:@"FSExecutionErrorException"] ||
+	       IsAppKitMenuAccessibilityCompatibilityException(exception) ||
+	       IsAppKitUnsatisfiableLayoutException(exception);
 }
 
 std::string OakStackDump (int linesToSkip)
@@ -133,7 +153,7 @@ void OakPrintBadAssertion (char const* lhs, char const* op, char const* rhs, std
 
 - (BOOL)exceptionHandler:(NSExceptionHandler*)sender shouldLogException:(NSException*)exception mask:(NSUInteger)mask
 {
-	if([exception.name isEqualToString:@"FSExecutionErrorException"] || IsAppKitMenuAccessibilityCompatibilityException(exception))
+	if(OakExceptionIsExpected(exception))
 		return NO;
 	os_log_error(OS_LOG_DEFAULT, "%{public}@: %{public}@\n", exception.name, exception.reason);
 	abort();

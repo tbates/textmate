@@ -7,3 +7,4 @@ textmate_framework(OakDebug)
 target_include_directories(OakDebug PRIVATE
   $<TARGET_PROPERTY:text,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(OakDebug PUBLIC "-framework Cocoa" "-framework ExceptionHandling")
+textmate_add_tests(OakDebug)
