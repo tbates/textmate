@@ -31,7 +31,10 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          git diff --name-only "$BASE" "$HEAD" \
+          # Three dots: diff from the merge base, so only the pull request's
+          # own changes count. A two-dot diff against the base branch tip also
+          # lists everything merged to main since the branch was cut.
+          git diff --name-only "$BASE...$HEAD" \
             | grep -E '^(\.github/|cmake/|bin/|.*CMakeLists\.txt$|.*\.cmake$|.*\.entitlements$|Applications/TextMate/Entitlements\.plist$)' \
             > sensitive.txt || true
           if [ -s sensitive.txt ]; then
