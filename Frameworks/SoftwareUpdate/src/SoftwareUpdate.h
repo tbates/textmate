@@ -53,10 +53,14 @@ NSString* OakSHAForRefInUploadPackAdvertisement (NSData* data, NSString* ref);
 //   beta           stable + “-beta”, so a beta user converges back onto
 //                  stable once it catches up — beta content ships as stable
 //                  eventually.
-//   experimental   “-exp” only, deliberately WITHOUT that convergence: an
-//                  experimental stream may never merge, so offering a newer
-//                  stable would silently take away the feature the user opted
-//                  in to test.
+//   experimental   every tag — stable, “-beta” and “-exp” — so the user who
+//                  asked for the newest of everything gets it, and converges
+//                  onto the stable that absorbs their experiment (issue #142:
+//                  2.5.1-undead-exp.4 users were never offered 2.6.0). An
+//                  experiment is numbered as the release it targets; should
+//                  that release ship without it, the experimenter falls back
+//                  to stable and a continued experiment is re-cut with a
+//                  higher number so it is offered again.
 //
 // An unrecognised (or nil) channel is treated as release — the least
 // permissive reading, so a stale or hand-edited default cannot widen what a

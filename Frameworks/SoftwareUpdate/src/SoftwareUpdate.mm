@@ -116,30 +116,19 @@ NSString* OakSHAForRefInUploadPackAdvertisement (NSData* data, NSString* ref)
 }
 
 // Whether `version` is one that `channel` may be offered. See the contract in
-// SoftwareUpdate.h — in particular that beta converges onto stable and
-// experimental deliberately does not, and that an unknown channel falls back
-// to the least permissive answer rather than the most.
+// SoftwareUpdate.h — in particular that beta and experimental both converge
+// onto stable, and that an unknown channel falls back to the least
+// permissive answer rather than the most.
 static BOOL OakVersionAdmissibleOnChannel (NSString* version, NSString* channel)
 {
 	BOOL isBeta         = [version containsString:kVersionMarkerBeta];
 	BOOL isExperimental = [version containsString:kVersionMarkerExperimental];
 
 	if([channel isEqualToString:kSoftwareUpdateChannelExperimental])
-		return isExperimental;
+		return YES;
 	else if([channel isEqualToString:kSoftwareUpdateChannelPrerelease])
 		return !isExperimental;
 	return !isBeta && !isExperimental;
-}
-
-// How a channel is named in messages shown to the user. Matches the wording
-// of the Preferences → Software Update pop-up.
-static NSString* OakDisplayNameForChannel (NSString* channel)
-{
-	if([channel isEqualToString:kSoftwareUpdateChannelExperimental])
-		return @"experimental";
-	else if([channel isEqualToString:kSoftwareUpdateChannelPrerelease])
-		return @"prerelease";
-	return @"release";
 }
 
 NSString* OakLatestVersionInUploadPackAdvertisement (NSData* data, NSString* channel)
@@ -508,21 +497,10 @@ BOOL OakVersionChangedSinceLastLaunch (NSString* lastVersion, NSString* currentV
 					remoteURL     = OakUpdateAssetURLForVersion(remoteVersion, url);
 					if(!remoteURL || !remoteVersion)
 					{
-						// Tell an empty channel apart from an unreadable feed. A
-						// channel with nothing published is an ordinary state —
-						// experimental streams exist only while an experiment is
-						// running — so saying the server sent no tags would be
-						// both wrong and alarming. The probe re-reads the same
-						// response against the release channel: if that finds a
-						// version, the feed was fine and the channel is simply
-						// empty. (The stringWithFormat: is parenthesised because
-						// its comma would otherwise read as an argument separator
-						// to the enclosing os_activity_initiate macro — brackets
-						// do not group for the preprocessor, parentheses do.)
-						NSString* message = OakLatestVersionInUploadPackAdvertisement(data, kSoftwareUpdateChannelRelease)
-							? ([NSString stringWithFormat:@"No %@ builds have been published yet.", OakDisplayNameForChannel(updateChannel)])
-							: @"No release tags in server response.";
-						error = [NSError errorWithDomain:@"SoftwareUpdate" code:0 userInfo:@{ NSLocalizedDescriptionKey: message }];
+						// Every channel admits the stable tags, so a channel that
+						// finds nothing means the feed carried no release tags at
+						// all.
+						error = [NSError errorWithDomain:@"SoftwareUpdate" code:0 userInfo:@{ NSLocalizedDescriptionKey: @"No release tags in server response." }];
 					}
 				}
 				else

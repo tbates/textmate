@@ -139,12 +139,39 @@ void test_latest_version_beta_channel_includes_betas_not_experiments ()
 	OAK_ASSERT([OakLatestVersionInUploadPackAdvertisement(version_tags(), kSoftwareUpdateChannelPrerelease) isEqualToString:@"2.1.10-undead-beta.10"]);
 }
 
-void test_latest_version_experimental_channel_sees_only_experiments ()
+void test_latest_version_experimental_channel_takes_the_highest_of_everything ()
 {
-	// Deliberately no convergence onto stable: an experimental stream may
-	// never merge, so offering the newest stable would silently take away
-	// the feature the user opted in to test. Also numeric: exp.10 > exp.2.
+	// Experimental sees every tag and takes the highest. Here the experiments
+	// outrank the stable and beta tags, so one of them wins — and
+	// numerically: exp.10 > exp.2.
 	OAK_ASSERT([OakLatestVersionInUploadPackAdvertisement(version_tags(), kSoftwareUpdateChannelExperimental) isEqualToString:@"2.3.0-undead-exp.10"]);
+}
+
+void test_latest_version_experimental_channel_converges_onto_stable ()
+{
+	// The real history behind issue #142: 2.5.1-undead-exp.1…4 merged into
+	// 2.5.1-undead, then 2.6.0-undead shipped. An experimental user must be
+	// offered the stable that contains their experiment and every stable
+	// after it, instead of staying on the last exp tag forever.
+	NSData* merged = advertisement(@[
+		str([NSString stringWithFormat:@"%@ refs/tags/v2.5.1-undead-exp.4\n", kTagObjectSHA]),
+		str([NSString stringWithFormat:@"%@ refs/tags/v2.5.1-undead\n", kTagObjectSHA]),
+	]);
+	OAK_ASSERT([OakLatestVersionInUploadPackAdvertisement(merged, kSoftwareUpdateChannelExperimental) isEqualToString:@"2.5.1-undead"]);
+
+	NSData* superseded = advertisement(@[
+		str([NSString stringWithFormat:@"%@ refs/tags/v2.5.1-undead-exp.4\n", kTagObjectSHA]),
+		str([NSString stringWithFormat:@"%@ refs/tags/v2.5.1-undead\n", kTagObjectSHA]),
+		str([NSString stringWithFormat:@"%@ refs/tags/v2.6.0-undead\n", kTagObjectSHA]),
+	]);
+	OAK_ASSERT([OakLatestVersionInUploadPackAdvertisement(superseded, kSoftwareUpdateChannelExperimental) isEqualToString:@"2.6.0-undead"]);
+
+	// A beta newer than every stable is part of "everything" too.
+	NSData* withBeta = advertisement(@[
+		str([NSString stringWithFormat:@"%@ refs/tags/v2.6.0-undead\n", kTagObjectSHA]),
+		str([NSString stringWithFormat:@"%@ refs/tags/v2.6.1-undead-beta.1\n", kTagObjectSHA]),
+	]);
+	OAK_ASSERT([OakLatestVersionInUploadPackAdvertisement(withBeta, kSoftwareUpdateChannelExperimental) isEqualToString:@"2.6.1-undead-beta.1"]);
 }
 
 void test_latest_version_unknown_channel_is_treated_as_stable ()
@@ -173,9 +200,9 @@ void test_latest_version_ignores_non_version_refs ()
 	OAK_ASSERT(OakLatestVersionInUploadPackAdvertisement(betasOnly, kSoftwareUpdateChannelRelease) == nil);
 	OAK_ASSERT([OakLatestVersionInUploadPackAdvertisement(betasOnly, kSoftwareUpdateChannelPrerelease) isEqualToString:@"2.1.2-undead-beta.1"]);
 
-	// No experimental tags → the experimental channel finds nothing rather
-	// than falling back to stable.
-	OAK_ASSERT(OakLatestVersionInUploadPackAdvertisement(betasOnly, kSoftwareUpdateChannelExperimental) == nil);
+	// No experimental tags → the experimental channel still takes the
+	// highest of what is there.
+	OAK_ASSERT([OakLatestVersionInUploadPackAdvertisement(betasOnly, kSoftwareUpdateChannelExperimental) isEqualToString:@"2.1.2-undead-beta.1"]);
 }
 
 void test_latest_version_malformed_or_empty ()

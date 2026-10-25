@@ -34,7 +34,7 @@ TextMate checks for updates itself. In Preferences → Software Update, "Watch f
 
 - **Normal releases**, the default: stable builds only.
 - **Prereleases**: betas as well as stable builds. When a stable release overtakes the beta you are on, you are offered that.
-- **Experimental builds**: features that may change a lot, or may never ship in a stable release. This channel offers only experimental builds, never a stable one, so switch back to Normal releases when you are done testing.
+- **Experimental builds**: features that may change a lot before they ship. This channel offers the newest build of any kind, so when an experiment lands in a stable release you move onto that release with everyone else.
 
 New prereleases and experimental builds are announced in [Discussions → Announcements](https://github.com/textmatelives/textmate/discussions/categories/announcements).
 
