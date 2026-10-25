@@ -2,6 +2,26 @@ Title: Release Notes
 
 # Changes
 
+## 2026-10-25 (v2.6.1-undead)
+
+A fix for the experimental update channel and another round of deprecated-API work from [@tagliala](https://github.com/tagliala). See [all changes since v2.6.0-undead](https://github.com/textmatelives/textmate/compare/v2.6.0-undead...v2.6.1-undead).
+
+### Software Update
+
+* **Fixed: the “Experimental builds” channel never offered a stable release.** It only looked at experimental tags, on the theory that an experiment might never ship as a release. Every experiment so far did ship, so anyone still on that channel was left on the last experimental build with nothing newer to see. The channel now takes the newest build of any kind, the same way “Prereleases” does, so an experiment that lands in a release moves you onto that release. [#142](https://github.com/textmatelives/textmate/issues/142). (`1e16bda8`)
+
+### File Browser
+
+* **Double-clicking a file that no application can open now shows the system’s “no application set” alert** instead of doing nothing. By [@tagliala](https://github.com/tagliala). (`6e467bf8`)
+
+### Under the hood
+
+Deprecated API work by [@tagliala](https://github.com/tagliala), tracked in [#118](https://github.com/textmatelives/textmate/issues/118), none of it visible: the Bundle Editor and the Bundles preferences look up their icons by content type (`4796cb23`), the crash notification and the filter list’s selection colour use the SDK’s declared replacements (`de212a32`), the file browser’s Open With menu opens documents through `NSWorkspace` instead of a hand-built Apple event (`f318b7b3`), `mate` launches TextMate through the current API and still waits for it (`743b6128`), and a shadowed variable in the Bundle Editor is renamed (`06e9b81a`). A checklist of what remains is on the issue.
+
+### Development
+
+* **The build chain guard only looks at a pull request’s own changes.** It compared against the tip of `main`, so a pull request opened before a build-chain change merged was flagged for that change too. It now diffs from the merge base. (`8f360669`)
+
 ## 2026-10-20 (v2.6.0-undead)
 
 Quick Look previews are back, the “you have been updated” sheet is gone, and a round of fixes from two contributors. See [all changes since v2.5.1-undead](https://github.com/textmatelives/textmate/compare/v2.5.1-undead...v2.6.0-undead).
